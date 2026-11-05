@@ -128,7 +128,8 @@ git clone https://github.com/hellow-world-collab/paper-translation-skill.git \
 **目录名必须是 `arxiv-zh-tex`**——SKILL.md 里的命令按这个路径写。Claude Code 用户把
 `~/.workbuddy/skills` 换成 `~/.claude/skills` 即可。
 
-LaTeX 分支零额外依赖，装了 XeLaTeX 就能跑。PDF 分支要单独建环境（几百 MB，只建一次）：
+LaTeX 分支除了 XeLaTeX 没有别的依赖；没装的话 Agent 会先自检、按你的系统装好（见下文「依赖」）。
+PDF 分支要单独建环境（几百 MB，只建一次）：
 
 ```bash
 python ~/.workbuddy/skills/arxiv-zh-tex/scripts/pdf_mode.py --project . --install
@@ -212,13 +213,39 @@ tests/
 
 ## 依赖
 
-- **LaTeX 分支**：XeLaTeX（TeX Live / MiKTeX 均可）、`pdftoppm`（审计出图用）。
-  中文字体：Windows 用 SimSun/微软雅黑，Linux 用 Fandol 或 Noto CJK。
-- **PDF 分支**：Python **3.10–3.12**（`pdf2zh` 的元数据写了 `<3.13`）+ `pymupdf`。
-  首次跑 `pdf_mode.py ... --install` 会自动建 `.venv-pdf` 并装好钉死版本：
+| 组件 | 用途 | 缺了会怎样 |
+|---|---|---|
+| **XeLaTeX**（TeX Live / MiKTeX） | 编译中文 PDF，LaTeX 分支的核心 | 直接跑不了 |
+| `pdftoppm`（poppler） | 审计出图、双栏对照页 | 能编译，图出不来 |
+| `pymupdf` | 渲染 HTML 阅读页 | 只影响 HTML，不影响 PDF |
+| Python **3.10–3.12** | PDF 分支（`pdf2zh` 要求 `<3.13`） | 3.13 装不上，要单独建环境 |
+
+按系统一条命令装齐：
+
+```bash
+# Windows（PowerShell）
+winget install --id MiKTeX.MiKTeX -e
+winget install --id oschwartz10612.Poppler -e
+
+# macOS
+brew install --cask basictex && brew install poppler
+sudo tlmgr install xetex ctex
+
+# Debian / Ubuntu
+sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk poppler-utils
+```
+
+> Windows 上 MiKTeX 装完通常不在 PATH，把 `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64` 加进去，
+> 或在新终端里重试。**这些 Agent 也会自己跑**：SKILL.md 第 -1 步就是环境自检，缺 XeLaTeX 它会
+> 按平台装好再开工，不需要你提前配。
+
+细节：
+
+- 中文字体：Windows 用 SimSun/微软雅黑，Linux 用 Fandol 或 Noto CJK。
+- **PDF 分支**：首次跑 `python scripts/pdf_mode.py . --install` 会自动建 `.venv-pdf` 并装好钉死版本
   `pdf2zh==1.9.11`、`tencentcloud-sdk-python-tmt==3.0.1478`。
-  翻译器是仓库自带的 `scripts/pdf_translate.py`，**不需要**另外安装
-  `pdf-formula-translate` 技能（装了也只是备选）。
+  翻译器是仓库自带的 `scripts/pdf_translate.py`，**不需要**另外安装 `pdf-formula-translate` 技能
+  （装了也只是备选）。
 - 核心链路（fetch → preflight → inject → apply → build → audit）**只用标准库**，
   第三方依赖只有渲染两个 HTML 时才需要 `pymupdf`。
 
