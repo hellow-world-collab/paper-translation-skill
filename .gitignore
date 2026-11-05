@@ -1,0 +1,19 @@
+# PDF 分支的本地虚拟环境（pdf2zh 装完几百 MB，不进仓库）
+.venv-pdf/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 运行时产物
+*.log
+.pytest_cache/

@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""第四步：抽取可翻译片段（segment），公式与命令替换为 ⟪Pnnnn⟫ 标记。
+
+设计来自 TeXGlot 的核心原则：模型永远不生成 TeX 语法。
+我们只把自然语言交给模型，受保护内容以标记占位，回填时原样还原。
+
+用法：
+    python extract.py <项目目录> [--min-ratio 0.6]
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _common import (MARKER, MARKER_RE, die, load_json, meta_dir, ok,
+                     read_text, save_json, warn)
+
+# ── 环境分类 ──────────────────────────────────────────────
+# 整体跳过：图形源码改了会破坏布局，代码环境不应翻译
+OPAQUE_ENVS = {
+    "tikzpicture", "pgfplots", "axis", "semilogxaxis", "semilogyaxis",
+    "loglogaxis", "picture", "circuitikz", "pspicture", "pgfonlayer",
+    "verbatim", "Verbatim", "lstlisting", "minted", "filecontents",
+    "filecontents*", "comment", "algorithm", "algorithmic", "algorithmicx",
+    "alltt", "thebibliography", "biblist",
+}
+# 数学环境：整体保护
+MATH_ENVS = {
+    "equation", "equation*", "eqnarray", "eqnarray*", "align", "align*",
+    "gather", "gather*", "multline", "multline*", "split", "cases",
+    "matrix", "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "array",
+    "displaymath", "math", "flalign", "flalign*", "alignat", "alignat*",
+}
+
+# 参数是可译文本的命令：递归进去
+TEXT_COMMANDS = {
+    "section", "subsection", "subsubsection", "paragraph", "subparagraph",
+    "caption", "title", "author", "date", "thanks", "footnote", "marginpar",
+    "textbf", "textit", "emph", "textsf", "texttt", "textrm", "textsc",
+    "textsl", "textup", "textmd", "textnormal", "underline", "uline",
+    "item", "text", "mbox", "makebox", "fbox", "framebox", "parbox",
+    "shortstack", "centerline", "leftline", "rightline",
+    "affiliation", "institution", "email", "keywords", "keyword",
+    "acknowledgments", "acknowledgements", "acks",
+    "abstractname", "appendixname", "contentsname", "refname",
+    "subcaption", "captionof", "part", "chapter",
+}
+# 参数不译的命令
+OPAQUE_COMMANDS = {
+    "label", "ref", "eqref", "autoref", "cref", "Cref", "pageref",
+    "cite", "citep", "citet", "citealp", "citealt", "citeauthor",
+    "citeyear", "nocite", "bibitem",
+    "url", "href", "includegraphics", "includesvg",
+    "input", "include", "subfile", "import", "subimport",
+    "bibliography", "bibliographystyle", "addbibresource",
+    "usepackage", "documentclass", "RequirePackage", "PassOptionsToPackage",
+    "newcommand", "renewcommand", "providecommand", "def", "gdef", "edef",
+    "xdef", "let", "newenvironment", "renewenvironment", "DeclareMathOperator",
+    "definecolor", "color", "vspace", "hspace", "setlength", "addtolength",
+    "setcounter", "addtocounter", "phantom", "hphantom", "vphantom",
+    "rule", "cline", "hline", "toprule", "midrule", "bottomrule",
+    "resizebox", "scalebox", "rotatebox", "raisebox", "adjustbox",
+    "graphicspath", "DeclareGraphicsExtensions", "hypersetup",
+    "geometry", "linespread", "pagestyle", "thispagestyle", "pagenumbering",
+    "clubpenalty", "widowpenalty", "interlinepenalty", "tolerance",
+    "vfill", "hfill", "vskip", "hskip", "noindent", "indent", "par",
+    "newpage", "clearpage", "cleardoublepage", "pagebreak", "linebreak",
+    "bibliographyitem", "printbibliography", "appendix",
+}
+# 前后参数角色不同：值为「不译的下标」
+MIXED_ARGS = {
+    "href": {0}, "textcolor": {0}, "colorbox": {0}, "fcolorbox": {0, 1},
+    "multicolumn": {0, 1}, "multirow": {0, 1}, "parbox": set(),
+    "raisebox": {0}, "scalebox": {0}, "resizebox": {0, 1},
+    "captionof": {0}, "import": {0}, "subimport": {0},
+}
+
+TEX_SOURCE_SUFFIX = {".tex", ".ltx", ".sty", ".cls"}
+
+
+@dataclass
+class Token:
+    kind: str          # text / protect / break
+    start: int
+    end: int
+    value: str
+
+
+@dataclass
+class Seg:
+    id: str
+    file: str
+    start: int
+    end: int
+    source: str
+    masked: str
+    protected: list[str]
+    role: str = "paragraph"
+    extra: dict = field(default_factory=dict)
+
+
+# ── 扫描器 ────────────────────────────────────────────────
+def find_env_end(s: str, start: int, name: str) -> int:
+    """从 \\begin{name} 之后开始，找到配对的 \\end{name}，返回其结束位置。"""
+    pattern = re.compile(
+        r"\\(begin|end)\s*\{" + re.escape(name) + r"\}", re.S
+    )
+    depth = 1
+    for m in pattern.finditer(s, start):
+        depth += 1 if m.group(1) == "begin" else -1
+        if depth == 0:
+            return m.end()
+    return -1
+
+
+def read_group(s: str, i: int) -> int:
+    """i 指向 '{'，返回配对 '}' 之后的位置。"""
+    depth = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def read_bracket(s: str, i: int) -> int:
+    """i 指向 '['，返回配对 ']' 之后的位置。"""
+    depth = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == "]" and depth == 0:
+            return i + 1
+        i += 1
+    return n
+
+
+def read_math(s: str, i: int) -> int:
+    """i 指向 $ 或 \\[ 或 \\(，返回数学区结束位置。"""
+    n = len(s)
+    if s.startswith("$$", i):
+        j = s.find("$$", i + 2)
+        return n if j < 0 else j + 2
+    if s.startswith(r"\[", i):
+        j = s.find(r"\]", i + 2)
+        return n if j < 0 else j + 2
+    if s.startswith(r"\(", i):
+        j = s.find(r"\)", i + 2)
+        return n if j < 0 else j + 2
+    j = i + 1
+    while j < n:
+        if s[j] == "\\":
+            j += 2
+            continue
+        if s[j] == "$":
+            return j + 1
+        j += 1
+    return n
+
+
+def tokenize(s: str, start: int = 0, end: int | None = None) -> list[Token]:
+    """把源码切成 text / protect / break 三种 token。
+
+    start/end 支持对命令参数做子区间递归，这样 \\caption{\\textbf{X} $y$} 里的
+    \\textbf 与公式仍会被正确保护。
+    """
+    out: list[Token] = []
+    n = len(s) if end is None else end
+    i = start
+
+    def push(kind: str, a: int, b: int):
+        if b > a:
+            out.append(Token(kind, a, b, s[a:b]))
+
+    while i < n:
+        c = s[i]
+
+        # 注释：作为保护片段，回填时原样保留
+        if c == "%":
+            j = s.find("\n", i)
+            j = n if j < 0 or j > n else j
+            push("protect", i, j)
+            i = j
+
+        # 空白行 = 段落边界
+        elif c == "\n":
+            m = re.match(r"\n[ \t\r]*\n", s[i:n])
+            if m:
+                push("break", i, i + m.end())
+                i += m.end()
+            else:
+                j = i + 1
+                while j < n and s[j] in " \t\r":
+                    j += 1
+                if j < n and s[j] == "\n":
+                    push("break", i, j)
+                else:
+                    push("text", i, j)
+                i = j
+
+        # 反斜杠：命令 / 环境 / 转义
+        elif c == "\\":
+            if s.startswith(r"\[", i) or s.startswith(r"\(", i):
+                j = read_math(s, i)
+                push("protect", i, j)
+                i = j
+                continue
+            if s.startswith(r"\\", i):
+                j = i + 2
+                if j < n and s[j] == "*":
+                    j += 1
+                m = re.match(r"\s*\[[^\]]*\]", s[j:])
+                if m:
+                    j += m.end()
+                # 换行是结构符号：表格行、标题断行都靠它，必须断段
+                push("break", i, j)
+                i = j
+                continue
+            m = re.match(r"\\([A-Za-z@]+\*?)", s[i:n])
+            if not m:
+                # 转义字符：\% \& \$ \_ \{ \} 等
+                j = min(i + 2, n)
+                push("protect", i, j)
+                i = j
+                continue
+            name = m.group(1).rstrip("*")
+            j = i + m.end()
+
+            # \begin{env} / \end{env}
+            if name in ("begin", "end"):
+                k = j
+                while k < n and s[k] in " \t":
+                    k += 1
+                if k < n and s[k] == "{":
+                    e = read_group(s, k)
+                    env = s[k + 1: e - 1].strip()
+                    if name == "begin" and env in OPAQUE_ENVS | MATH_ENVS:
+                        stop = find_env_end(s, e, env)
+                        if stop > 0:
+                            push("protect", i, stop)
+                            i = stop
+                            continue
+                    # 环境定界符后的可选参数（[ht]、[t]）与必选参数（列格式）
+                    # 都属于结构，不能进入正文，否则 {lccc} 会被当成散文翻译
+                    k2 = e
+                    while k2 < n and s[k2] in " \t":
+                        k2 += 1
+                    while k2 < n and s[k2] == "[":
+                        k2 = read_bracket(s, k2)
+                        while k2 < n and s[k2] in " \t":
+                            k2 += 1
+                    while k2 < n and s[k2] == "{":
+                        k2 = read_group(s, k2)
+                        while k2 < n and s[k2] in " \t":
+                            k2 += 1
+                    push("break", i, k2)
+                    i = k2
+                    continue
+                push("protect", i, j)
+                i = j
+                continue
+
+            # 段落命令
+            if name in ("par", "item", "newpage", "clearpage", "appendix"):
+                k = j
+                while k < n and s[k] in " \t":
+                    k += 1
+                if k < n and s[k] == "[":
+                    k = read_bracket(s, k)
+                push("break", i, k)
+                i = k
+                continue
+
+            # 可选参数 [..]，通常不译（尺寸、位置、标签）
+            k = j
+            opts_end = k
+            while k < n and s[k] in " \t":
+                k += 1
+            while k < n and s[k] == "[":
+                k = read_bracket(s, k)
+                while k < n and s[k] in " \t":
+                    k += 1
+                opts_end = k
+            # 必选参数 {..}
+            args_start = k
+            groups = []
+            while k < n and s[k] == "{":
+                e = read_group(s, k)
+                groups.append((k, e))
+                k = e
+                while k < n and s[k] in " \t":
+                    k += 1
+
+            translatable = name in TEXT_COMMANDS or (
+                name in MIXED_ARGS and len(groups) > 0
+            )
+            if translatable and name not in OPAQUE_COMMANDS:
+                # 命令本身与其可选参数保持保护，只让文本参数进入正文
+                if opts_end > j:
+                    push("protect", i, opts_end)
+                    local_start = opts_end
+                else:
+                    push("protect", i, args_start)
+                    local_start = args_start
+                opaque_idx = MIXED_ARGS.get(name, set())
+                cursor = local_start
+                for idx, (gs, ge) in enumerate(groups):
+                    if idx in opaque_idx:
+                        push("protect", cursor, ge)
+                    else:
+                        # 左括号保护，内容递归扫描，右括号保护
+                        push("protect", cursor, gs + 1)
+                        out.extend(tokenize(s, gs + 1, ge - 1))
+                        push("protect", ge - 1, ge)
+                    cursor = ge
+                i = k
+                continue
+
+            # 其它命令：连参数整体保护
+            push("protect", i, k if k > j else j)
+            i = k if k > j else j
+
+        # 数学
+        elif c == "$":
+            j = read_math(s, i)
+            push("protect", i, j)
+            i = j
+
+        # 表格列分隔符：结构符号，断段
+        elif c == "&":
+            push("break", i, i + 1)
+            i += 1
+
+        else:
+            j = i
+            while j < n and s[j] not in "\\$%&\n":
+                j += 1
+            if j == i:
+                j = i + 1
+            push("text", i, j)
+            i = j
+
+    return out
+
+
+def merge_text(tokens: list[Token]) -> list[Token]:
+    """把相邻的 text token 合并，避免碎段。"""
+    merged: list[Token] = []
+    for t in tokens:
+        if merged and t.kind == "text" and merged[-1].kind == "text":
+            prev = merged[-1]
+            merged[-1] = Token("text", prev.start, t.end, prev.value + t.value)
+        else:
+            merged.append(t)
+    return merged
+
+
+HEADING_RE = re.compile(r"^\s*\\(?:sub)*section\*?\s*\{|^\s*\\paragraph\s*\{")
+
+
+def _has_words(s: str) -> bool:
+    return bool(re.search(r"[A-Za-z\u4e00-\u9fff]{2,}", s))
+
+
+def looks_like_prose(text: str) -> bool:
+    """判断一段文本是否值得翻译：至少两个英文词，或含明显中文。"""
+    stripped = re.sub(r"\s+", " ", text).strip()
+    if len(stripped) < 2:
+        return False
+    if re.fullmatch(r"[\s\d\W]*", stripped):
+        return False
+    words = re.findall(r"[A-Za-z]{2,}", stripped)
+    return len(words) >= 2 or len(re.findall(r"[\u4e00-\u9fff]", stripped)) >= 2
+
+
+def group_segments(tokens: list[Token], text: str, rel: str,
+                   id_counter: list[int], role: str = "paragraph") -> list[Seg]:
+    """把连续的可译内容合并成 segment。"""
+    segs: list[Seg] = []
+    buf: list[Token] = []
+
+    def flush():
+        nonlocal buf
+        if not buf:
+            return
+        # 去掉首尾纯空白
+        while buf and buf[0].kind == "text" and not buf[0].value.strip():
+            buf.pop(0)
+        while buf and buf[-1].kind == "text" and not buf[-1].value.strip():
+            buf.pop()
+        if not buf:
+            return
+
+        source = text[buf[0].start: buf[-1].end]
+        # 章节标题常只有一个词（Introduction / Preliminaries），按散文规则会被误删
+        heading = bool(HEADING_RE.match(source)) and _has_words(source)
+        if not looks_like_prose(source) and not heading:
+            buf = []
+            return
+
+        parts, protected = [], []
+        i = 0
+        while i < len(buf):
+            if buf[i].kind != "protect":
+                parts.append(buf[i].value)
+                i += 1
+                continue
+            # 连续的结构标记合并成一个，中间纯空白并入，减少模型看到的碎片
+            j, end_pos = i, buf[i].end
+            while j + 1 < len(buf):
+                nxt = buf[j + 1]
+                if nxt.kind == "protect":
+                    j += 1
+                    end_pos = nxt.end
+                elif nxt.kind == "text" and not nxt.value.strip():
+                    j += 1
+                else:
+                    break
+            protected.append(text[buf[i].start:end_pos])
+            parts.append(MARKER.format(len(protected)))
+            i = j + 1
+        masked = re.sub(r"[ \t]+", " ", "".join(parts)).strip()
+        masked = re.sub(r" *\n *", " ", masked)
+
+        # 全部是标记、没有实际词的段落没有翻译价值
+        core = MARKER_RE.sub("", masked)
+        if not looks_like_prose(core) and not (heading and _has_words(core)):
+            buf = []
+            return
+
+        id_counter[0] += 1
+        segs.append(Seg(
+            id=f"{rel}#{id_counter[0]:04d}",
+            file=rel,
+            start=buf[0].start,
+            end=buf[-1].end,
+            source=source,
+            masked=masked,
+            protected=protected,
+            role=role,
+        ))
+        buf = []
+
+    for tok in tokens:
+        if tok.kind == "break":
+            flush()
+        else:
+            buf.append(tok)
+    flush()
+    return segs
+
+
+def extract_file(path: Path, rel: str, in_body_only: bool = True) -> list[Seg]:
+    text = read_text(path)
+    m = re.search(r"\\begin\s*\{document\}", text)
+
+    if not (in_body_only and m):
+        return group_segments(merge_text(tokenize(text)), text, rel, [0])
+
+    segs: list[Seg] = []
+    # preamble 里只取「会印到纸面上」的命令参数，正文另有大量定义不应翻译。
+    # role / setheadertext / thanks 之前漏了：结果是页眉还写 Technical Report、
+    # 作者脚注还是 Equal Contributions，正文却全中文（典型的半中半英）。
+    for cmd in ("title", "role", "setheadertext", "thanks"):
+        pat = re.compile(r"\\" + cmd + r"\s*(?:\[[^\]]*\])?\s*\{")
+        for mm in pat.finditer(text[: m.start()]):
+            gs = mm.end() - 1
+            ge = read_group(text, gs)
+            if ge <= gs + 1:
+                continue
+            inner = merge_text(tokenize(text, gs + 1, ge - 1))
+            segs.extend(group_segments(inner, text, rel, [0], role="head"))
+
+    # 部分模板（如 thu 系列的 thuc3i.cls）把 abstract 写在 \begin{document} 之前，
+    # 只按正文抽取会整段漏掉摘要——这是论文最该译的部分。
+    pre = text[: m.start()]
+    for mm in re.finditer(r"\\begin\s*\{abstract\}(.*?)\\end\s*\{abstract\}", pre, re.S):
+        inner = merge_text(tokenize(text, mm.start(1), mm.end(1)))
+        segs.extend(group_segments(inner, text, rel, [0]))
+
+    body = group_segments(merge_text(tokenize(text, m.start())), text, rel, [0])
+    return segs + body
+
+
+def fix_ids(segs: list[Seg]) -> None:
+    for i, seg in enumerate(segs, 1):
+        seg.id = f"{seg.file}#{i:04d}"
+
+
+def learn_listing_envs(texts: list[str]) -> set[str]:
+    """论文常自建 \\lstnewenvironment{normalcode} 之类的代码环境，
+    名字不在 OPAQUE_ENVS 里就会被当成正文抽出来。这里动态收集。
+    """
+    found = set()
+    for t in texts:
+        found |= set(re.findall(r"\\lstnewenvironment\s*\{([^}]+)\}", t))
+        found |= set(re.findall(r"\\newenvironment\s*\{([^}]+)\}\s*\{\s*\\begin\{lstlisting\}", t))
+    return found
+
+
+def main():
+    ap = argparse.ArgumentParser(description="抽取可翻译片段")
+    ap.add_argument("project")
+    ap.add_argument("--force", action="store_true")
+    args = ap.parse_args()
+
+    root = Path(args.project).resolve()
+    arz = meta_dir(root)
+    manifest = load_json(arz / "manifest.json")
+    if not manifest:
+        die("缺少 manifest.json，请先跑 fetch.py")
+    zh = root / "zh"
+    if not zh.is_dir():
+        die("zh/ 不存在，请先跑 inject_cjk.py")
+
+    out = arz / "segments.json"
+    if out.is_file() and not args.force:
+        data = load_json(out)
+        ok(f"复用已有抽取结果：{len(data['segments'])} 段")
+        return
+
+    files = [f for f in manifest["tex_files"]
+             if (zh / f).is_file() and not re.search(r"(^|/)00README", f)]
+
+    # 先扫一遍全文，把自定义代码环境登记进不译集合
+    discovered = learn_listing_envs([read_text(zh / f) for f in files])
+    if discovered:
+        OPAQUE_ENVS.update(discovered)
+        ok(f"识别到自定义代码环境：{', '.join(sorted(discovered))}")
+
+    all_segs: list[Seg] = []
+    per_file = {}
+
+    print(f"\n[{root.name}] 抽取可译片段\n")
+    for rel in files:
+        segs = extract_file(zh / rel, rel, in_body_only=True)
+        fix_ids(segs)
+        all_segs.extend(segs)
+        total = len(read_text(zh / rel))
+        covered = sum(s.end - s.start for s in segs)
+        per_file[rel] = {
+            "segments": len(segs),
+            "chars": covered,
+            "file_chars": total,
+            "ratio": round(covered / total, 3) if total else 0,
+        }
+        print(f"  {rel:<28} {len(segs):>3} 段  "
+              f"覆盖 {covered:>6} / {total:>6} 字符  ({per_file[rel]['ratio']:.0%})")
+
+    save_json(out, {
+        "project": str(root),
+        "files": per_file,
+        "segments": [asdict(s) for s in all_segs],
+        "stats": {
+            "total": len(all_segs),
+            "chars": sum(s.end - s.start for s in all_segs),
+        },
+    })
+
+    total_chars = sum(v["file_chars"] for v in per_file.values())
+    covered = sum(v["chars"] for v in per_file.values())
+    ratio = covered / total_chars if total_chars else 0
+    print(f"\n  合计 {len(all_segs)} 段，覆盖源码 {ratio:.0%}")
+    if ratio < 0.18:
+        warn("覆盖率异常低：可能主文件用 \\input 拆分，或大量内容在不译环境里")
+    print(f"\n  输出 {out}")
+    print(f"\n下一步：翻译 segments.json 里的 masked 字段，写入 translations.json")
+
+
+if __name__ == "__main__":
+    main()

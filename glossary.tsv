@@ -1,0 +1,175 @@
+﻿# arXiv 论文中译术语表  v1（2026-11-04）
+# 格式：原文 <TAB> 译名 <TAB> 备注
+# 备注含「待定」的条目需人工确认；含「保留」的条目在中文正文中原样保留英文。
+# 脚本读取时忽略以 # 开头的行。
+
+# ── 一、跟踪与控制 ────────────────────────────────────────────
+motion tracking	运动跟踪	
+motion tracking policy	运动跟踪策略	
+reference motion	参考运动	
+target motion	目标运动	
+retargeting	重定向	
+motion clip	运动片段	
+keyframe	关键帧	
+motion inpainting	运动补全	
+pose	位姿	位置+姿态统称时用；单指朝向时用「姿态」
+orientation	姿态	
+position	位置	
+twist	twist	首次写「空间速度（twist）」，后续保留英文
+anchor	锚定	作名词时用「锚点」
+anchor body	锚定刚体	
+root	根节点	
+joint	关节	
+degree of freedom (DoF)	自由度	
+workspace	工作空间	
+end effector	末端执行器	
+whole-body control	全身控制	
+tracking error	跟踪误差	
+drift	漂移	
+recovery	恢复	
+
+# ── 二、强化学习 ──────────────────────────────────────────────
+reinforcement learning (RL)	强化学习	首次出现给全称，后续用 RL
+policy	策略	
+rollout	展开	首次写「展开（rollout）」
+episode	回合	
+step	步	
+reward	奖励	
+reward term	奖励项	
+regularization	正则化	
+termination	终止条件	
+observation	观测	
+action	动作	
+state	状态	
+actor-critic	actor-critic	保留英文；首次可写「演员–评论家（actor-critic）」
+asymmetric actor-critic	非对称演员–评论家	
+advantage	优势	advantage function 才译「优势函数」
+discount factor	折扣因子	
+entropy coefficient	熵系数	
+curriculum learning	课程学习	
+domain randomization	域随机化	
+adaptive sampling	自适应采样	
+ablation study	消融研究	
+baseline	基线	
+iteration	迭代	
+convergence	收敛	
+
+# ── 三、生成模型 ──────────────────────────────────────────────
+diffusion model	扩散模型	
+latent diffusion model (LDM)	隐扩散模型	
+guided diffusion	引导扩散	
+classifier guidance	分类器引导	
+test-time guidance	测试时引导	
+denoising step	去噪步	
+noise schedule	噪声调度	
+inpainting	补全	
+latent space	隐空间	
+encoder / decoder	编码器 / 解码器	
+conditional	条件化	如「以速度指令为条件」
+conditioning	条件	如「以指令为条件的运动」
+zero-shot	零样本	
+generalization	泛化	
+downstream task	下游任务	
+in-distribution / out-of-distribution	分布内 / 分布外	
+
+# ── 四、硬件与动力学 ──────────────────────────────────────────
+humanoid	人形机器人	
+quadruped	四足机器人	
+actuator	执行器	
+armature	电枢	首次出现写「电枢惯量（armature）」，后续用「电枢」
+reflected inertia	折合惯量	
+rotor inertia	转子惯量	
+gear ratio	减速比	
+joint limit	关节限位	
+torque	力矩	
+ground reaction force (GRF)	地面反作用力	
+center of mass (COM)	质心	
+contact force	接触力	
+friction coefficient	摩擦系数	
+restitution coefficient	恢复系数	
+impedance controller	阻抗控制器	
+PD gain	PD 增益	
+stiffness / damping	刚度 / 阻尼	
+natural frequency	固有频率	
+damping ratio	阻尼比	
+overdamped	过阻尼	
+compliance	柔顺性	
+linear acceleration	线加速度	
+angular velocity	角速度	
+linear velocity	线速度	
+
+# ── 五、部署与感知 ────────────────────────────────────────────
+sim-to-real	sim-to-real	保留
+sim-to-real transfer	sim-to-real 迁移	
+state estimation	状态估计	
+odometry	里程计	
+motion capture	动作捕捉	
+teleoperation	遥操作	
+joystick	摇杆	
+waypoint navigation	路点导航	
+obstacle avoidance	避障	
+signed distance field (SDF)	符号距离场	首次全称，后续 SDF
+barrier function	障碍函数	
+cost function	代价函数	
+cost term	代价项	
+collision radius	碰撞半径	
+success rate	成功率	
+collision rate	碰撞率	
+user study	用户研究	
+confidence interval	置信区间	
+throughput	吞吐	
+latency	延迟	
+
+# ── 六、VLA / 具身智能（跨论文复用） ──────────────────────────
+embodied AI	具身智能	
+vision-language-action (VLA)	视觉–语言–动作	首次全称，后续 VLA
+vision-language model (VLM)	视觉语言模型	首次全称，后续 VLM
+imitation learning	模仿学习	
+behavior cloning	行为克隆	
+demonstration	演示	
+fine-tuning	微调	
+human-in-the-loop (HITL)	人在回路	
+social navigation	社交导航	
+socially aware navigation	社交感知导航	与 social compliance 区分，勿混
+social compliance	社会合规	
+navigation	导航	
+locomotion	移动	足式场景用「足式运动」，避免与 motion 撞词
+foundation model	基础模型	
+generalist policy	通用策略	
+
+# ── 七、保留英文，不译 ──────────────────────────────────────
+sim-to-real	sim-to-real	
+end-to-end	端到端	
+Transformer	Transformer	
+attention	注意力	作为机制名可译；「self-attention」译「自注意力」
+VAE	VAE	
+DAgger	DAgger	
+PPO	PPO	
+IsaacSim	IsaacSim	
+MuJoCo	MuJoCo	
+Unitree G1	Unitree G1	
+ONNX Runtime	ONNX Runtime	
+TensorRT	TensorRT	
+t-SNE	t-SNE	
+LiDAR	LiDAR	
+GPU / CPU	GPU / CPU	
+API	API	
+# 论文名、方法名、数据集名一律保留原文：
+# BeyondMimic / ASAP / LAFAN1 / TrackVLA / NavFoM / SocialNav / PDP / Diffuse-CLoC 等
+
+# ── 八、标点与排版约定 ──────────────────────────────────────
+# 破折号：中文用 ——（占两字），范围用 –（短横）
+# 百分号：数字与 % 之间保留 LaTeX 的 \%，如 $27.38\%$
+# 中英混排：中文与英文/数字之间不手动加空格，交给 xeCJK 的 CJKspace
+# 括号：中文正文用全角（），包住英文术语时也用全角
+# 引号：中文正文用 “ ”，代码与路径用 ASCII
+# 省略：中文用 ……，不用 ...
+
+# ── 九、不译区域（extract.py 跳过，原文照搬） ────────────────
+# 图片：\includegraphics 引用的位图、PDF 插图 —— 像素内容不可编辑，一律不动
+# 图形环境：tikzpicture / pgfplots / axis / picture / circuitikz 内的文本节点
+#          —— 源码虽可编辑，但改字会破坏节点尺寸与连线布局，一律不动
+# 代码类：verbatim / lstlisting / minted / filecontents —— 原样保留
+# 表格：tabular / table 内的表头与单元格 —— 属于可编辑正文，需要翻译
+# 图注 caption：需要翻译
+# 标签与引用：\label / \ref / \cite / \url / \href 参数 —— 原样保留

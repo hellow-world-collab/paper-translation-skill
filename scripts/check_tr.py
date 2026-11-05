@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""译文体检：编译前先查「翻全了没有」，别把半中半英的 PDF 交出去。
+
+为什么单独一步：
+  apply.py 只校验标记与反斜杠，缺译的段会被静默跳过、原样保留英文；
+  编译又永远成功（LaTeX 不在乎中英混排），最后只能靠人翻 20 页去发现。
+  这一步把「哪些段其实没翻」提前摆出来。
+
+查四类问题：
+  1. 缺译        segments.json 里有、translations.json 里没有
+  2. 疑似原样返回 译文与原文 masked 完全相同（公式段正常，正文段异常）
+  3. 中文过少    正文段的汉字占比 < 8%，基本等于没翻
+  4. 成片英文    译文里仍有 ≥ 7 个连续英文单词（常见于模型漏抄一截）
+
+用法：
+    python check_tr.py <项目目录>              # 体检，有问题退出码 1
+    python check_tr.py <项目目录> --strict      # 连「成片英文」也算失败
+    python check_tr.py <项目目录> --json        # 机器可读
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _common import MARKER_RE, cjk_ratio, die, load_json, meta_dir, save_json  # noqa: E402
+
+# 连续 7 个以上英文单词（允许中间的逗号、连字符）。中英混排时模型常把半句话原样留下。
+LATIN_RUN = re.compile(r"[A-Za-z][A-Za-z'’\-]*(?:[,\s]+[A-Za-z][A-Za-z'’\-]*){6,}")
+# 正文段允许的「没翻」下限：低于这个汉字占比就当没译
+MIN_CJK = 0.08
+
+
+def bare(text: str) -> str:
+    return MARKER_RE.sub("", text or "")
+
+
+def run_len(s: str) -> int:
+    return len(re.findall(r"[A-Za-z][A-Za-z'’\-]*", s))
+
+
+def scan(root: Path, strict: bool = False) -> dict:
+    """体检主体，供 check_tr.py 与 build.py 共用。"""
+    arz = meta_dir(root)
+    data = load_json(arz / "segments.json")
+    if not data:
+        die("缺少 segments.json，请先跑 extract.py")
+    tr = load_json(arz / "translations.json", default={}) or {}
+
+    segs = data["segments"]
+    missing: list[dict] = []
+    same: list[dict] = []
+    thin: list[dict] = []
+    latin: list[dict] = []
+
+    for s in segs:
+        t = tr.get(s["id"])
+        if t is None or not str(t).strip():
+            missing.append({"id": s["id"], "file": s["file"], "role": s["role"],
+                            "src": s["source"][:90]})
+            continue
+        t = str(t)
+        b = bare(t)
+        body = bare(s["masked"])
+        words_src = run_len(body)
+
+        if b.strip() == body.strip():
+            same.append({"id": s["id"], "file": s["file"], "role": s["role"],
+                         "src": s["source"][:90]})
+            continue
+
+        # 公式/纯符号段没有汉字是正常的，只对含 8 个以上英文词的段要求中文
+        if s["role"] != "head" and words_src >= 8 and cjk_ratio(b) < MIN_CJK:
+            thin.append({"id": s["id"], "file": s["file"], "cjk": round(cjk_ratio(b), 3),
+                         "src": s["source"][:90], "tr": b[:90]})
+
+        longest = ""
+        for m in LATIN_RUN.finditer(b):
+            if len(m.group(0)) > len(longest):
+                longest = m.group(0)
+        if longest and run_len(longest) >= 7:
+            latin.append({"id": s["id"], "file": s["file"], "words": run_len(longest),
+                          "run": longest[:100], "role": s["role"]})
+
+    total = len(segs)
+    done = total - len(missing)
+    report = {
+        "total": total,
+        "translated": done,
+        "missing": missing,
+        "identical": same,
+        "low_cjk": thin,
+        "latin_runs": latin,
+        "pass": not (missing or thin or (strict and latin)),
+    }
+    save_json(arz / "check_tr.json", report)
+    return report
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="译文完整性体检")
+    ap.add_argument("project")
+    ap.add_argument("--strict", action="store_true", help="成片英文也算失败")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    root = Path(args.project).resolve()
+    report = scan(root, args.strict)
+    missing, same = report["missing"], report["identical"]
+    thin, latin = report["low_cjk"], report["latin_runs"]
+    total, done = report["total"], report["translated"]
+
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["pass"] else 1
+
+    def block(title: str, items: list[dict], fmt) -> None:
+        if not items:
+            return
+        print(f"\n  {title}（{len(items)}）")
+        for it in items[:12]:
+            print("    " + fmt(it))
+        if len(items) > 12:
+            print(f"    …… 另有 {len(items) - 12} 条")
+
+    print(f"\n[{root.name}] 译文体检")
+    print(f"  片段      {total}")
+    print(f"  已译      {done}（{done / total:.0%}）" if total else "  片段      0")
+    print(f"  缺译      {len(missing)}")
+    print(f"  原样返回  {len(same)}（公式、纯符号段属正常）")
+    print(f"  中文过少  {len(thin)}")
+    print(f"  成片英文  {len(latin)}")
+
+    block("缺译（这些段会原样保留英文）", missing,
+          lambda it: f"{it['id']:<28} {it['file']}  {it['src']}")
+    block("中文过少（几乎等于没翻）", thin,
+          lambda it: f"{it['id']:<28} 汉字占比 {it['cjk']:.0%}  {it['tr']}")
+    block("成片英文（可能是漏抄一段）", latin,
+          lambda it: f"{it['id']:<28} {it['words']} 词：{it['run']}")
+
+    if report["pass"]:
+        print("\n  结论      通过")
+        return 0
+    print("\n  结论      不通过（先补齐再 build，否则 PDF 会是半中半英）")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

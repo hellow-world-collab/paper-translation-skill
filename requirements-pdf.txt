@@ -1,0 +1,9 @@
+# PDF 分支（pdf_mode.py）用的依赖。必须 Python 3.10–3.12：
+# pdf2zh 的元数据写了 requires-python <3.13，3.13 上会 No matching distribution found。
+#
+# 两个版本都别乱升：
+#   - pdf2zh 没有 1.9.12，1.9.11 是支持 <3.13 的最后一版
+#   - tencentcloud-sdk-python-tmt 3.1.x 只剩 10 KB 空壳（没有 TextTranslateRequest），
+#     装上会让 import pdf2zh 直接 ImportError
+pdf2zh==1.9.11
+tencentcloud-sdk-python-tmt==3.0.1478

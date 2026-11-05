@@ -1,0 +1,96 @@
+# 已知的宏包级 / 源码级问题与处理方案
+# 每处理一篇新论文，把新遇到的坑追加到这里，下次直接命中。
+# auto: true 表示 inject_cjk / build 能自动处理；false 表示必须人工判断。
+
+type1-fonts:
+  packages: [newtxtext, newtxmath, newtxsf, txfonts, pxfonts, mathptmx, mathptm, times, pslatex]
+  symptom: |
+    XeLaTeX 下触发 METAFONT 回退，日志刷大量
+    "Transform components aren't all known"（常见 500+ 条）。
+    最阴险的地方是：编译 0 错误、PDF 正常生成、页数正常，但中文一个字都没有。
+  cause: |
+    这些是 Type1 字体包，编码假设是 OT1/T1。XeTeX 用 TU 编码，缺字时回退到
+    METAFONT 生成位图，而生成过程失败又只产生 warning 不产生 error。
+  fix: |
+    换成 OpenType 等价物：
+      \usepackage{fontspec}
+      \setmainfont{TeX Gyre Termes}   % Times 的 OpenType 克隆
+      \usepackage{unicode-math}
+      \setmathfont{TeX Gyre Termes Math}
+    同时摘掉与 unicode-math 互斥的 amssymb / amsfonts / bm。
+  auto: true
+  seen: [2508.08241]
+
+type1-explicit-usefont:
+  packages: []
+  symptom: |
+    源码里显式写 \usefont{T1}{ptm}{m}{n} 或 \fontfamily{ptm}，
+    inject_cjk 摘掉 newtx 后这些字体名不再存在。
+  fix: |
+    用 fontspec 定义 Unicode 家族并把 T1 名字映射过去（NFSSFamily 别名）。
+    参考 TeXGlot 的 prepare_legacy_latin_fonts 实现。
+  auto: false
+
+accent-as-variable:
+  packages: []
+  symptom: |
+    pdflatex 能编过；换 xelatex 后报 "Missing \cr inserted" 或
+    "! Missing $ inserted"，并很快撞上 100 errors 上限，文档被截断成两三页。
+  cause: |
+    作者把重音命令当变量名用，例如 math.sty 里定义 $\s$、$\a$。
+    pdflatex 下 \s 是 \mathaccent，\a 是 \accent；xelatex 加了 fontspec 后
+    这两个被重定义为文本重音符号，进数学模式直接崩。
+  fix: |
+    把数学模式里的 $\s$ / $\a$ 改成 $s$ / $a$（只改单字母，不要碰 \section）。
+  auto: false
+  seen: [2404.00210]
+
+fandol-no-tounicode:
+  packages: [xeCJK]
+  symptom: |
+    用 \setCJKmainfont{FandolSong-Regular.otf} 编译 0 错误、页数正常，
+    但 pdftotext 提取不到任何中文，pdftoppm 报
+    "Missing language pack for Adobe-GB1"。
+  cause: 本机 MiKTeX 的 Fandol 缺 ToUnicode CMap，字形能画出来但文字层是空的。
+  fix: 改用系统字体 SimSun（配 AutoFakeBold=2 得到伪粗体）。
+  auto: true
+  seen: [2508.08241]
+
+wide-table-overflow:
+  packages: []
+  symptom: Overfull \hbox (15–30pt too wide) 出现在表格页，右侧撞出版心。
+  cause: 中文表头比英文宽，列数多时累积超出。
+  fix: |
+    优先 \small 或 \footnotesize（build.py --fit-tables 会对 ≥7 列的表格自动做）；
+    仍溢出再用 \resizebox{\columnwidth}{!}{...} 包住 tabular。
+  auto: true
+  seen: [2508.08241]
+
+missing-bbl:
+  packages: []
+  symptom: 编译后引用全是 [?]，日志有 "Citation ... undefined"。
+  cause: arXiv 包里有 .bib 但没有 .bbl，而作者用的 bibstyle 本机没有。
+  fix: |
+    preflight 会自动跑 bibtex；若 bibtex 报缺 .bst，
+    退而使用源码包自带的 .bbl：把 \bibliography{...} 换成 \input{<main>.bbl}。
+  auto: true
+
+cjk-command-glue:
+  packages: [xeCJK]
+  symptom: "! Undefined control sequence" 指向形如 \boldmath这 的位置。
+  cause: |
+    xeCJK 把中文字符的 catcode 设为 11（letter），所以 \命令 后面紧跟中文
+    会被并成一个新的控制序列名。
+  fix: 回填时在「命令 + 中文」交界处补空格。apply.py 已内置，无需手工。
+  auto: true
+  seen: [2508.08241]
+
+preamble-title-macro:
+  packages: []
+  symptom: 编译出的 PDF 标题仍是英文，但正文已译。
+  cause: |
+    标题不在 \title{} 里，而是作者自定义的 \def\scititle{...} 或
+    \newcommand{\papertitle}{...}，extract 只认 \title。
+  fix: 在 zh/<main>.tex 里手工把该定义的内容换成中文，再重跑 build。
+  auto: false
+  seen: [2508.08241]
