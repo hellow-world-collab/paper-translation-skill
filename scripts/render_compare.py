@@ -13,14 +13,25 @@
 
 产物：
     <out>/index.html          目录版（图片在 <out>/pages/，首屏快）
-    <out>/pages/*.jpg
+    <out>/pages/*.webp        默认 WebP；没有 Pillow 时回退 .jpg
 可选：
     --single-file <路径>      另存单文件版（图片内联为 data URI）
+
+关于清晰度（v1.0.2）：
+    页面是位图，浏览器打开 PDF 是矢量渲染，位图永远比不过，只能把差距压到看不见。
+    两个变量：源图分辨率、压缩质量。
+    - 单栏视图最宽 900 CSS px（模板 fitWidth 的上限），高分屏 dpr=2 需要 1800 物理像素，
+      所以源图宽度必须 ≥1800 px。A4 宽 612 pt → scale 3.0 才够（旧默认 1.7 只有 1041 px，
+      被浏览器放大 1.7 倍，这是「HTML 比 PDF 糊」的真正原因）。
+    - JPEG q78 会在笔画边缘产生振铃，细笔画汉字尤其明显；WebP q88 同等体积下干净得多。
+      实测 42 页：1.7×JPEG78=6.1 MB，3.0×WebP88=9.5 MB —— 分辨率翻倍只多 56%。
+      对照组：2.6×JPEG q90 4:4:4 要 17.6 MB，纯亏，故不采用。
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import io
 import json
 import os
 import re
@@ -31,6 +42,13 @@ try:
     import pymupdf
 except ImportError:  # pragma: no cover
     import fitz as pymupdf
+
+try:  # WebP 只能靠 Pillow 编，PyMuPDF 的 tobytes 只认 png/jpg/psd 一类
+    from PIL import Image
+
+    HAS_PIL = True
+except ImportError:  # pragma: no cover
+    HAS_PIL = False
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -67,24 +85,56 @@ def clean_title(t: str) -> str:
 
 # ---------------------------------------------------------------- 渲染
 
+_FALLBACK_WARNED = False
+
+
+def encode_page(pix, fmt: str, quality: int) -> tuple[bytes, str, str]:
+    """把 Pixmap 编成字节，返回 (数据, 扩展名, MIME)。
+
+    webp 走 Pillow（PyMuPDF 只支持 png/jpg/pnm/psd 等）；没装 Pillow 就退到
+    高质量 JPEG，并提示一次——不能静默降级，否则又变成「看起来能用但更糊」。
+    """
+    global _FALLBACK_WARNED
+    if fmt == "webp":
+        if not HAS_PIL:
+            if not _FALLBACK_WARNED:
+                print("    [!] 没装 Pillow，无法输出 WebP，本次回退 JPEG q95。"
+                      "\n        想要更清晰：python -m pip install pillow")
+                _FALLBACK_WARNED = True
+            return pix.tobytes("jpg", jpg_quality=95), "jpg", "image/jpeg"
+        im = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        buf = io.BytesIO()
+        im.save(buf, "WEBP", quality=quality, method=4)
+        return buf.getvalue(), "webp", "image/webp"
+    if fmt == "png":
+        return pix.tobytes("png"), "png", "image/png"
+    return pix.tobytes("jpg", jpg_quality=quality), "jpg", "image/jpeg"
+
+
 def render_pdf(doc, outdir: Path, prefix: str, scale: float, quality: int,
-               inline: bool) -> list[dict]:
+               inline: bool, fmt: str = "webp") -> list[dict]:
     pages: list[dict] = []
     total = 0
     mat = pymupdf.Matrix(scale, scale)
+    if not inline:
+        outdir.mkdir(parents=True, exist_ok=True)
+        # 上一次可能是别的格式，同名前缀的旧图留着会被误当成新产物
+        stale = re.compile(rf"^{re.escape(prefix)}-\d{{3}}\.(?:jpg|jpeg|png|webp)$", re.I)
+        for old in outdir.iterdir():
+            if old.is_file() and stale.match(old.name):
+                old.unlink()
     for i, page in enumerate(doc):
         pix = page.get_pixmap(matrix=mat, alpha=False)
-        raw = pix.tobytes("jpg", jpg_quality=quality)
+        raw, ext, mime = encode_page(pix, fmt, quality)
         total += len(raw)
-        name = f"{prefix}-{i+1:03d}.jpg"
+        name = f"{prefix}-{i+1:03d}.{ext}"
         if inline:
-            src = "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+            src = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
         else:
-            outdir.mkdir(parents=True, exist_ok=True)
             (outdir / name).write_bytes(raw)
             src = f"{outdir.name}/{name}"
         pages.append({"src": src, "w": pix.width, "h": pix.height})
-    print(f"    {prefix}: {len(pages)} 页  {human(total)}")
+    print(f"    {prefix}: {len(pages)} 页  {human(total)}  ({pix.width}x{pix.height})")
     return pages
 
 
@@ -238,14 +288,30 @@ def main() -> None:
     ap.add_argument("--original")
     ap.add_argument("--translated")
     ap.add_argument("--out", default="html/compare")
-    ap.add_argument("--scale", type=float, default=2.4)
-    ap.add_argument("--quality", type=int, default=82)
+    # 默认 3.0 是按「单栏视图最宽 900 CSS px × dpr 2 ≈ 1800 物理像素」反推的，
+    # 1.7 那版只有 1041 px，在缩放屏上会被放大 1.7 倍，肉眼就是糊的。
+    ap.add_argument("--scale", type=float, default=3.0)
+    ap.add_argument("--quality", type=int, default=92)
+    ap.add_argument("--format", choices=["webp", "jpg", "png"], default="webp")
     ap.add_argument("--title")
     ap.add_argument("--sub")
     ap.add_argument("--single-file")
-    ap.add_argument("--single-scale", type=float, default=1.7)
-    ap.add_argument("--single-quality", type=int, default=78)
+    # 单文件是全量内联，压在 q88 刚好 12 MB 上下；再高会顶到 20 MB 以上
+    ap.add_argument("--single-scale", type=float, default=3.0)
+    ap.add_argument("--single-quality", type=int, default=88)
     args = ap.parse_args()
+
+    # 没 Pillow 就只能走 JPEG：3.0x 的 JPEG 会把单文件顶到 25 MB 以上，
+    # 不如退回 2.4x（照样比旧版 1.7x 清楚），并明确告知怎么装。
+    if args.format == "webp" and not HAS_PIL:
+        print("[!] 未安装 Pillow：WebP 不可用。请 python -m pip install pillow\n"
+              "    本次自动改用 JPEG q90 @2.4x（体积可控，清晰度仍优于旧默认）", flush=True)
+        args.format = "jpg"
+        args.scale = min(args.scale, 2.4)
+        args.quality = max(args.quality, 90)
+        if args.single_file:
+            args.single_scale = min(args.single_scale, 2.4)
+            args.single_quality = max(args.single_quality, 90)
 
     root = Path(args.root).resolve()
     out = (root / args.out).resolve()
@@ -262,8 +328,12 @@ def main() -> None:
 
     print("[2/4] 渲染页面")
     pages_dir = out / "pages"
-    en_pages = render_pdf(a_doc, pages_dir, "en", args.scale, args.quality, inline=False)
-    zh_pages = render_pdf(b_doc, pages_dir, "zh", args.scale, args.quality, inline=False)
+    print(f"      {args.format.upper()} q{args.quality} @ {args.scale}x"
+          f"（目标 ≥1800 px 宽，覆盖 dpr=2 的单栏视图）")
+    en_pages = render_pdf(a_doc, pages_dir, "en", args.scale, args.quality,
+                          inline=False, fmt=args.format)
+    zh_pages = render_pdf(b_doc, pages_dir, "zh", args.scale, args.quality,
+                          inline=False, fmt=args.format)
 
     print("[3/4] 建立书签锚点")
     anchors, rows = build_anchors(a_doc, b_doc)
@@ -293,9 +363,11 @@ def main() -> None:
     print(f"[4/4] 写出 {index}  ({human(index.stat().st_size)})")
 
     if args.single_file:
-        print("      生成单文件版…")
-        en2 = render_pdf(a_doc, out, "en", args.single_scale, args.single_quality, inline=True)
-        zh2 = render_pdf(b_doc, out, "zh", args.single_scale, args.single_quality, inline=True)
+        print(f"      生成单文件版…（{args.format.upper()} q{args.single_quality} @ {args.single_scale}x）")
+        en2 = render_pdf(a_doc, out, "en", args.single_scale, args.single_quality,
+                         inline=True, fmt=args.format)
+        zh2 = render_pdf(b_doc, out, "zh", args.single_scale, args.single_quality,
+                         inline=True, fmt=args.format)
         meta2 = {"en": {"pages": en2, "lines": en_lines},
                  "zh": {"pages": zh2, "lines": zh_lines},
                  "anchors": anchors, "toc": rows}

@@ -69,6 +69,10 @@
 `render_compare.py` 把两份 PDF 逐页渲成图，左右并排。页数不一致是正常的（中文字距紧、
 行距小，24 页对 21 页），靠书签锚点让「同一节」对齐，而不是「同一页」。
 
+页面图按 **3.0×（1836 px 宽）** 渲染、存 WebP：单栏视图最宽 900 CSS px，高分屏 dpr=2
+要 1800 个物理像素才不虚，1.7× 会被浏览器放大 1.7 倍，看着就比直接开 PDF 糊。
+换 WebP 后分辨率翻倍、单文件只从 8 MB 涨到 14 MB（JPEG 同样清晰要 24 MB）。
+
 ![对照页内置搜索：搜 VLA，双栏 458 处命中](docs/images/showcase-search.png)
 
 <p align="center">
@@ -196,11 +200,11 @@ scripts/
   build.py               编译（内部先跑 check_tr）
   audit.py               产物审计（页数、中文覆盖率、图表数量、参考文献）
   render_html.py         段落级重排网页（旧版，可选）
-  render_compare.py      页面对照页（左原文图 / 右译文图）
+  render_compare.py      页面级对照页（左原文图 / 右译文图）
   pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
   pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
   pending.py             待译片段清单
-  env_check.py           环境自检：xelatex / pdftoppm / pymupdf / Python 版本
+  env_check.py           环境自检：xelatex / pdftoppm / pymupdf / pillow / Python 版本
   package_market.py      打技能市场包（压平 KaTeX、剔开发资源、自检层级与体积）
   _common.py             路径、原子写、JSON 读写、编译参数
 assets/
@@ -225,6 +229,7 @@ tests/
 | **XeLaTeX**（TeX Live / MiKTeX） | 编译中文 PDF，LaTeX 分支的核心 | 直接跑不了 |
 | `pdftoppm`（poppler） | 审计出图、双栏对照页 | 能编译，图出不来 |
 | `pymupdf` | 渲染 HTML 阅读页 | 只影响 HTML，不影响 PDF |
+| `pillow` | 对照页输出 WebP（3.0× 高清、体积只有 JPEG 六成） | 退回 JPEG 2.4×，会糊一些 |
 | Python **3.10–3.12** | PDF 分支（`pdf2zh` 要求 `<3.13`） | 3.13 装不上，要单独建环境 |
 
 按系统一条命令装齐：

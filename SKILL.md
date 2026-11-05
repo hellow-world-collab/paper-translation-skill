@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.1
+version: 1.0.2
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -241,8 +241,18 @@ python $S/render_compare.py --root ./2509.09674 \
     --single-file "论文_双栏对照.html"
 ```
 
-产物：`html/compare/index.html` + `html/compare/pages/*.jpg`（懒加载，首屏约 100ms）；
-`--single-file` 另出一份图片全内联的单文件版（约 11 MB，交给别人看用）。
+产物：`html/compare/index.html` + `html/compare/pages/*.webp`（懒加载，首屏约 100ms）；
+`--single-file` 另出一份图片全内联的单文件版（约 14 MB，交给别人看用）。
+
+**清晰度（v1.0.2 起）**：页面是位图，浏览器开 PDF 是矢量渲染，位图永远比不过，只能把差距压到看不见。
+默认 `--scale 3.0` 不是拍脑袋：单栏视图最宽 900 CSS px（模板 `fitWidth` 的上限），
+dpr=2 的高分屏要 1800 个物理像素才够，A4 宽 612 pt → 必须渲到 1836 px。
+旧默认 1.7 只有 1041 px，被浏览器放大 1.73 倍，这就是「HTML 看着比 PDF 糊」的唯一原因。
+压缩用 WebP（q92 目录版 / q88 单文件版）而不是 JPEG：42 页实测 1.7×JPEG78=6.1 MB、
+3.0×WebP88=9.5 MB，分辨率翻倍只多 56%；而 2.6×JPEG q90 4:4:4 要 17.6 MB，纯亏。
+WebP 靠 Pillow 编（PyMuPDF 不支持 webp），**没装 Pillow 会退回 JPEG q90 @2.4× 并提示**，
+不会静默降级成更糊的旧行为。想微调：`--scale` 管分辨率、`--single-quality` 管单文件体积。
+显式想用别的格式加 `--format jpg|png`（`png` 无损但单文件会到 40 MB 量级，只适合目录版）。
 
 要点：
 
@@ -293,6 +303,7 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
+| **对照页看着比直接开 PDF 糊** | 页面是位图，源图只有 1041 px 宽（`--single-scale 1.7`），而单栏视图宽到 900 CSS px，高分屏 dpr=2 要 1800 物理像素 → 浏览器放大 1.73 倍；叠加 JPEG q78 的振铃 | 默认改 3.0×（1836 px）+ WebP；实测清晰度指标 4194→10703（PDF 同密度为 13217），体积 8.1→14.5 MB。见「双栏对照页」一节的清晰度说明 |
 | 编译 0 错误但 PDF 无中文 | `newtxtext`/`txfonts` 等 Type1 包触发 METAFONT 回退，中文静默消失 | `inject_cjk` 会自动检测并换成 OpenType（TeX Gyre Termes + unicode-math）；若仍失败换 Fandol |
 | 同样是 0 错误 0 缺字，但汉字全丢 | 文档类经 `XCharter.fontspec` 设了 `\defaultfontfeatures{Extension=.otf}`，`SimSun` 被解析成 `SimSun.otf` → nullfont | 注入块在 `xeCJK` 之后加 `\defaultfontfeatures{}`，清空继承特性（已自动） |
 | `Transform components aren't all known` 刷屏 | 同上 | 同上 |

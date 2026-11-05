@@ -35,6 +35,11 @@ HINTS = {
         "mac": "python3 -m pip install pymupdf",
         "linux": "python3 -m pip install pymupdf",
     },
+    "pillow": {
+        "win": "python -m pip install pillow",
+        "mac": "python3 -m pip install pillow",
+        "linux": "python3 -m pip install pillow",
+    },
 }
 
 
@@ -51,11 +56,13 @@ def linux_hint(item: str) -> str:
     if shutil.which("dnf"):
         return {"xelatex": "sudo dnf install texlive-xetex texlive-collection-langchinese",
                 "pdftoppm": "sudo dnf install poppler-utils",
-                "pymupdf": "python3 -m pip install pymupdf"}[item]
+                "pymupdf": "python3 -m pip install pymupdf",
+                "pillow": "python3 -m pip install pillow"}.get(item, HINTS[item]["linux"])
     if shutil.which("pacman"):
         return {"xelatex": "sudo pacman -S texlive-core texlive-langchinese",
                 "pdftoppm": "sudo pacman -S poppler",
-                "pymupdf": "python3 -m pip install pymupdf"}[item]
+                "pymupdf": "python3 -m pip install pymupdf",
+                "pillow": "python3 -m pip install pillow"}.get(item, HINTS[item]["linux"])
     return HINTS[item]["linux"]
 
 
@@ -106,6 +113,18 @@ def main() -> None:
         "ok": ver is not None, "path": ver,
         "why": "渲染两个 HTML（对照页、阅读页）；不渲染就不用装",
         "hint": None if ver else hint("pymupdf"),
+    })
+
+    try:
+        import PIL  # noqa: F401
+        pil_ver = getattr(PIL, "__version__", "?")
+    except Exception:
+        pil_ver = None
+    items.append({
+        "name": "Pillow", "level": "optional",
+        "ok": pil_ver is not None, "path": pil_ver,
+        "why": "对照页输出 WebP（3.0× 高清但体积只有 JPEG 的六成）；不装会退回 JPEG 2.4×，会糊一些",
+        "hint": None if pil_ver else hint("pillow"),
     })
 
     items.append({
