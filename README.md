@@ -66,7 +66,7 @@
 
 ## 对照页
 
-`render_compare.py` 把两份 PDF 逐页渲成图，左右并排。页数不一致是正常的（中文字距紧、
+`render_compare.py` 把两份 PDF 原样逐页并排呈现。页数不一致是正常的（中文字距紧、
 行距小，24 页对 21 页），靠书签锚点让「同一节」对齐，而不是「同一页」。
 
 页面不是图片，是把 PDF 交给浏览器里的 **pdf.js 现渲**：canvas 位图尺寸按
@@ -77,17 +77,20 @@
 ![对照页内置搜索：搜 VLA，双栏 458 处命中](docs/images/showcase-search.png)
 
 <p align="center">
-  <sub><code>Ctrl/⌘+F</code> 搜 <code>VLA</code>：命中按词画框（当前项橙色、其余淡黄），滚动条旁有命中刻度。截图是双栏视图，共 458 处。</sub>
+  <sub><code>Ctrl/⌘+F</code> 搜 <code>VLA</code>：命中按真实字形边界画框（当前项橙色、其余淡黄），中英混排也不偏移；滚动条旁有命中刻度。截图是双栏视图，共 458 处。</sub>
 </p>
 
-页面本身是图片，浏览器自带的查找搜不到正文；所以渲染时把 PDF 文字层里每个词连同横坐标
-一起抽进 `META`，前端做子串匹配——它是真的「搜得到、看得见」：
+页面由 pdf.js 在浏览器里现渲，所以 Ctrl+F 之外还能直接划选正文；搜索索引则是另存的一份
+「每页每行每词 + 逐字符横坐标」的 `META`，前端做子串匹配——它是真的「搜得到、看得见」：
 
-- **逐词高亮**：按词画框，不是整行横带。缩放、翻页、换视图后位置自动重算。
+- **命中框精确到字**：按真实字形边界画框，不是整行横带。混排词（`SimpleVLA-RL:`、中文夹 `VLA`）
+  也不会偏——每个词都带词内逐字符的起点坐标，而不是按字数在词框里均分。
+- **划选 / 复制**：canvas 上叠了一层透明文字层，拖选、双击选词、`Ctrl+C` 都能用，
+  复制出来是文字不是图。只给文字开 `pointer-events`，空白处照样双击放大、拖动平移。
 - **只搜当前栏**：单栏视图就只搜这一栏，双栏两边都搜，切视图命中自动重算——不会把视图切走。
 - **命中计数与刻度**：`1/458` 这样的计数，加上滚动条旁的刻度条，长论文里能看出命中散落在哪。
 - **联动 / 各自滚动**：拖动任意一栏，另一栏按锚点插值跟位。
-- **浏览器式缩放**：`Ctrl/⌘ + 滚轮` 以指针为锚点、双击 100%↔220%、双指捏合，40%–400%。
+- **浏览器式缩放**：`Ctrl/⌘ + 滚轮` 以指针为锚点、空白处双击 100%↔220%、双指捏合，40%–400%。
 - **快捷键**：目录跳转、页码输入、`[`/`]` 翻页、`L` 联动、`F`/`0` 复位、`⇄` 交换左右。
 
 ![单栏译文视图：公式 1 2 3 是真 LaTeX 数学](docs/images/showcase-single.png)
@@ -327,7 +330,7 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 | 组件 | 许可证 | 说明 |
 |---|---|---|
 | [KaTeX](https://github.com/KaTeX/KaTeX)（`assets/katex/`） | MIT | 内置，用于对照页公式渲染 |
-| [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | AGPL-3.0 / 商业双许可 | 运行期依赖，用于取页面位图与文字层；商用请自行评估 |
+| [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | AGPL-3.0 / 商业双许可 | 运行期依赖，用于取页面尺寸、书签与逐词文字层（搜索索引）；商用请自行评估 |
 | [pdf.js](https://github.com/mozilla/pdf.js) | Apache-2.0 | 随包内联（320 KB 引擎 + 1.09 MB worker），对照页在浏览器端渲染 PDF |
 | [pdf2zh / PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)（`pdf2zh==1.9.11`） | AGPL-3.0 | **可选**，仅 PDF 分支使用；不用该分支则不涉及 |
 

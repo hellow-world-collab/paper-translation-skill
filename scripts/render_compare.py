@@ -95,11 +95,15 @@ def write_pdf_js(outdir: Path, key: str, payload: str) -> str:
 
 
 def page_words(doc) -> list[list[list]]:
-    """每页的文字行，行内带每个词的横向范围：[[y0, y1, [[x0, x1, 词], ...]], ...]。
+    """每页的文字行，行内带每个词的横向范围：[[y0, y1, [[x0, x1, 词, [字x0…]], ...]], ...]。
 
     x 按页宽、y 按页高归一化（0~1），前端按百分比定位，缩放时不用重算。
-    canvas 上的正文选不中（要选中的话得再铺一层 textLayer），所以把文字层存成
-    小数组后，前端能像浏览器一样逐词高亮，而不是只能画一整行横带。
+    前端另铺了一层透明 textLayer 负责划选复制；这里的数组是给搜索用的——
+    高亮框、滚动条刻度、跳转定位都靠它，且未渲染的页也能搜到。
+
+    第 4 项是词内每个字符自身的起点 x。没有它，前端只能按「字符数平均」在词框里
+    内插，混排词（"SimpleVLA-RL:"、中文夹 VLA）就会偏半个字——中文尤其明显，
+    因为它整行没有空格，一个词就是一行。存了字符坐标后，命中框直接取真实字形边界。
 
     用 rawdict 而不是 words：后者给的 (块号, 行号) 在这类 PDF 里会跨行重复，
     同一组里混进页面上下两端的词，算出来的行高能到半页；rawdict 的字符是
@@ -129,12 +133,13 @@ def page_words(doc) -> list[list[list]]:
                             continue
                         bb = ch.get("bbox") or (0, 0, 0, 0)
                         if cur is None:
-                            cur = [bb[0], bb[1], bb[2], bb[3], c]
+                            cur = [bb[0], bb[1], bb[2], bb[3], c, [bb[0]]]
                             words.append(cur)
                         else:
                             cur[2] = max(cur[2], bb[2])
                             cur[3] = max(cur[3], bb[3])
                             cur[4] += c
+                            cur[5].append(bb[0])
                 words = [w for w in words if w[4].strip()]
                 if not words:
                     continue
@@ -144,7 +149,8 @@ def page_words(doc) -> list[list[list]]:
                     y1 = y0 + 1
                 rows.append([
                     round(y0 / H, 4), round(y1 / H, 4),
-                    [[round(w[0] / W, 4), round(w[2] / W, 4), w[4]] for w in words],
+                    [[round(w[0] / W, 4), round(w[2] / W, 4), w[4],
+                      [round(x / W, 4) for x in w[5]]] for w in words],
                 ])
         out.append(rows)
     return out

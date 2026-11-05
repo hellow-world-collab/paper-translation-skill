@@ -100,6 +100,15 @@ body[data-swap="1"] .pane[data-side="zh"]{order:0}
 .page canvas{display:block;width:100%;height:100%;background:#fff;
   user-select:none;-webkit-user-drag:none}
 .page canvas:not([width]){background:repeating-linear-gradient(45deg,#fbfbfc,#fbfbfc 8px,#f4f5f7 8px,#f4f5f7 16px)}
+/* 透明文字层：canvas 上是像素选不中，铺一层真实文本在上面，浏览器才能像
+   普通 PDF 阅读器那样划选/双击选词/复制。只给 span 开 pointer-events，
+   空白处仍然能双击放大、按住拖动平移。 */
+.textLayer{position:absolute;inset:0;overflow:hidden;line-height:1;text-align:initial;
+           color:transparent;z-index:2;pointer-events:none;user-select:none}
+.textLayer span{position:absolute;white-space:pre;transform-origin:0 0;color:transparent;
+                pointer-events:auto;cursor:text;user-select:text;-webkit-user-select:text}
+.textLayer span::selection{background:rgba(37,99,235,.32);color:transparent}
+.textLayer span::-moz-selection{background:rgba(37,99,235,.32);color:transparent}
 .pgnum{text-align:center;font-size:10.5px;color:#a4acb6;padding:5px 0 0;letter-spacing:.6px;
        font-variant-numeric:tabular-nums;user-select:none}
 .pg+.pg{margin-top:10px}
@@ -142,7 +151,7 @@ body[data-swap="1"] .pane[data-side="zh"]{order:0}
 .find button:disabled{opacity:.35;cursor:default;background:transparent}
 
 /* 命中块：精确到词，和浏览器 Ctrl+F 一样 */
-.hl{position:absolute;background:rgba(255,214,0,.36);border-radius:2px;pointer-events:none}
+.hl{position:absolute;background:rgba(255,214,0,.36);border-radius:2px;pointer-events:none;z-index:1}
 .hl.cur{background:rgba(255,146,0,.48);box-shadow:0 0 0 1px rgba(198,105,0,.72)}
 
 /* 滚动条旁的命中刻度（近似 Chrome 的黄色小条） */
@@ -293,16 +302,49 @@ function pdfBytes(k){
   return buf;
 }
 
+function withTimeout(p, ms){
+  return Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error('worker 超时')), ms))]);
+}
+
 async function bootPdf(){
   if(typeof pdfjsLib === 'undefined') throw new Error('pdf.js 没有加载起来');
   const wk = document.getElementById('pdfjs-worker');
-  if(wk && !pdfjsLib.GlobalWorkerOptions.workerSrc){
-    /* file:// 下 new Worker('pdf.worker.min.js') 会被判跨源，只能自己拼 Blob */
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      URL.createObjectURL(new Blob([wk.textContent], {type:'text/javascript'}));
+
+  /* worker 源码随页面内联，起 Worker 时只能走 Blob URL。注意：不要赋给
+     GlobalWorkerOptions.workerSrc —— pdf.js 会做同源检查，file:// 的 origin 是 "null"，
+     判成跨源后它再包一层 importScripts，在 blob worker 里必然失败，然后悄悄退回主线程。
+     直接把 Worker 交给 PDFWorker({port}) 就绕开了那一层。 */
+  let makeWorker = null;
+  if(wk && typeof pdfjsLib.PDFWorker === 'function'){
+    try{
+      const url = URL.createObjectURL(new Blob([wk.textContent], {type:'text/javascript'}));
+      /* 同时留一条兜底：万一 port 方案在某个浏览器上不成立，pdf.js 自己会退回
+         主线程渲染（它靠 workerSrc 动态 import 拿 worker 代码） */
+      pdfjsLib.GlobalWorkerOptions.workerSrc = url;
+      makeWorker = () => new Worker(url);
+    }catch(e){ makeWorker = null; }
   }
+
+  window.__pdfMode = window.__pdfMode || {};
   for(const k of ['en','zh']){
-    DOC[k] = await pdfjsLib.getDocument({data: pdfBytes(k)}).promise;
+    const bytes = pdfBytes(k);
+    let doc = null, mode = 'main';
+    if(makeWorker){
+      let w = null;
+      try{
+        w = makeWorker();
+        const pw = new pdfjsLib.PDFWorker({port: w});
+        /* 传副本：pdf.js 会把 buffer 转移给 worker，失败重试时原件就空了 */
+        doc = await withTimeout(pdfjsLib.getDocument({data: bytes.slice(), worker: pw}).promise, 15000);
+        mode = 'worker';
+      }catch(e){
+        console.warn('后台 worker 没起来，退回主线程渲染（会稍慢）', e);
+        try{ w && w.terminate(); }catch(_){}
+        doc = null;
+      }
+    }
+    DOC[k] = doc || await pdfjsLib.getDocument({data: bytes}).promise;
+    window.__pdfMode[k] = mode;
   }
 }
 
@@ -322,6 +364,74 @@ function showEngineError(err){
 /* 页面容器当前的 CSS 宽度（已含缩放系数） */
 function figWidth(fig){ return Math.max(1, Math.round(fig.getBoundingClientRect().width)); }
 
+/* ---------- 透明文字层（划选 / 双击选词 / 复制） ----------
+   canvas 上是像素，浏览器选不中。把 pdf.js 的 textContent 铺成一层透明 span，
+   位置按当前 CSS 宽度换算，字号用 pt→px 的同一比例，选区和字形自然重合。
+   只给 span 开 pointer-events：点在空白处仍然是双击放大 / 拖动平移。
+   缩放后 canvas 重绘，这一层也跟着重建（TL 记着它对应的 CSS 宽度）。 */
+const TL = new Map();                        // "k:i" -> 铺层时的 CSS 宽度
+
+function dropTextLayer(k, i){
+  const s = S[k], pgEl = s && s.pages[i];
+  const old = pgEl && pgEl.querySelector('.textLayer');
+  if(old) old.remove();
+  TL.delete(k+':'+i);
+}
+
+async function buildTextLayer(k, i, cssW){
+  const s = S[k], fig = s.figs && s.figs[i];
+  if(!fig) return;
+  const doc = DOC[k];
+  if(!doc || cssW < 8){ return; }
+  let page, tc;
+  try{
+    page = await doc.getPage(i+1);
+    tc = await page.getTextContent();
+  }catch(e){ return; }
+  if(Math.abs(figWidth(fig) - cssW) > 2) return;      /* 期间又缩放了，等下一轮 */
+
+  const dim = s.meta.pages[i];
+  const sc = cssW / dim.w;
+  const vp = page.getViewport({scale: sc});
+  let layer = fig.querySelector('.textLayer');
+  if(!layer){ layer = document.createElement('div'); layer.className = 'textLayer'; fig.appendChild(layer); }
+  layer.textContent = '';
+  layer.style.width  = vp.width.toFixed(1)+'px';
+  layer.style.height = vp.height.toFixed(1)+'px';
+
+  const frag = document.createDocumentFragment();
+  const todo = [];
+  for(const it of tc.items){
+    if(!it.str || !it.str.trim()) continue;
+    const tx = pdfjsLib.Util.transform(vp.transform, it.transform);
+    if(Math.abs(tx[1]) > 0.01 || Math.abs(tx[2]) > 0.01) continue;  /* 旋转文字不铺，免得错位 */
+    const fs = Math.hypot(tx[2], tx[3]);
+    if(!(fs > 2.5)) continue;
+    const st = tc.styles[it.fontName] || {};
+    const asc = typeof st.ascent === 'number' ? st.ascent * fs : fs * 0.8;
+    const el = document.createElement('span');
+    el.textContent = it.str;
+    el.style.left = tx[4].toFixed(2)+'px';
+    el.style.top  = (tx[5] - asc).toFixed(2)+'px';
+    el.style.fontSize = fs.toFixed(2)+'px';
+    el.style.fontFamily = st.fontFamily || 'sans-serif';
+    frag.appendChild(el);
+    todo.push([el, (it.width || 0) * sc]);
+  }
+  layer.appendChild(frag);
+
+  /* 替代字体的字宽和 PDF 记录的不完全一致，按比例横向缩放到等宽，
+     否则长行的选区会越往右越偏。比例离谱的（字体回退得太多）就不动。 */
+  for(const [el, want] of todo){
+    if(!(want > 0.5)) continue;
+    const got = el.getBoundingClientRect().width;
+    if(!(got > 0.5)) continue;
+    const r = want / got;
+    if(r > 0.55 && r < 1.8 && Math.abs(r - 1) > 0.02) el.style.transform = 'scaleX('+r.toFixed(4)+')';
+  }
+  TL.set(k+':'+i, cssW);
+}
+
 async function renderPage(k, i){
   const doc = DOC[k];
   if(!doc) return;
@@ -338,7 +448,10 @@ async function renderPage(k, i){
   const pix = (dim.w*scale) * (dim.h*scale);
   if(pix > MAX_PIX) scale *= Math.sqrt(MAX_PIX/pix);
   const targetW = Math.round(dim.w*scale);
-  if(DONE.get(k+':'+i) === targetW) return;    /* 已经是目标分辨率，不重画 */
+  if(DONE.get(k+':'+i) === targetW){          /* 位图已是目标分辨率，只补文字层 */
+    if(TL.get(k+':'+i) !== cssW) buildTextLayer(k, i, cssW);
+    return;
+  }
 
   const prev = TASK.get(k+':'+i);
   if(prev){ try{ prev.cancel(); }catch(e){} TASK.delete(k+':'+i); }
@@ -354,6 +467,7 @@ async function renderPage(k, i){
     await task.promise;
     TASK.delete(k+':'+i);
     DONE.set(k+':'+i, targetW);
+    buildTextLayer(k, i, cssW);
   }catch(e){
     if(e && e.name === 'RenderingCancelledException') return;
     console.warn('渲染失败', k, i, e);
@@ -371,6 +485,7 @@ function releaseFar(k){
     if(i >= lo-win && i <= hi+win) return;
     const cv = p.querySelector('canvas');
     if(cv && cv.width){ cv.width = 0; cv.height = 0; DONE.delete(k+':'+i); }
+    dropTextLayer(k, i);            /* 文字层也一起收掉，43 页全留着 DOM 太重 */
   });
 }
 
@@ -484,6 +599,7 @@ function attachPan(){
     let moved=false;
     sc.addEventListener('mousedown',e=>{
       if(e.button!==0 || sc.scrollWidth <= sc.clientWidth+4) return;
+      if(e.target.closest('.textLayer')) return;   /* 按在字上＝要选字，别抢成拖动 */
       down=true; moved=false; sx=e.clientX; sy=e.clientY; sl=sc.scrollLeft; st=sc.scrollTop;
       /* 不在这里 preventDefault：否则浏览器不再派发 dblclick，双击放大就失效 */
     });
@@ -652,9 +768,10 @@ function hideToc(){document.getElementById('toc').classList.remove('on')}
 function toggleToc(){document.getElementById('toc').classList.contains('on')?hideToc():showToc()}
 
 /* ---------- 全文搜索（浏览器式：全部命中上色 + 计数 + 上/下一个） ---------- */
-/* 页面是图片，浏览器自带的 Ctrl+F 搜不到正文。渲染时把 PDF 文字层按「词 + 位置」
-   一起存进 META，这里做子串匹配：命中处画一个精确到词的色块（当前项橙色、其余黄色），
-   并在滚动条旁打刻度——和浏览器里 Ctrl+F 的手感一致。 */
+/* 页面是 canvas + 透明文字层：浏览器自带的 Ctrl+F 只能搜到已渲染页的文字，
+   视口外还没铺文字层的页搜不到。所以渲染时把 PDF 文字层按「词 + 逐字符位置」
+   一起存进 META，这里做全篇子串匹配：命中处按真实字形边界画色块
+   （当前项橙色、其余黄色），并在滚动条旁打刻度——和浏览器里 Ctrl+F 的手感一致。 */
 const FIND = {hits:[], i:-1, q:"", els:[], ticks:[], capped:false};
 const IDX = {en:[], zh:[]};
 const MAXHITS = 3000;
@@ -667,17 +784,16 @@ function buildIndex(){
     const arr=[];
     (S[k].meta.lines||[]).forEach((rows,pi)=>{
       (rows||[]).forEach(r=>{
-        const ws=r[2];
-        if(!ws || !ws.length) return;
-        const xs=[], starts=[];
+        const wt=r[2];
+        if(!wt || !wt.length) return;
+        const ws=[];                    /* {t, x0, x1, cs} */
         let text="";
-        ws.forEach((w,i)=>{
+        wt.forEach((w,i)=>{
           if(i) text+=" ";
-          starts.push(text.length);
+          ws.push({t:w[2], x0:w[0], x1:w[1], cs:w[3]||null});
           text+=w[2];
-          xs.push([w[0],w[1]]);
         });
-        arr.push({k, page:pi, y0:r[0], y1:r[1], xs, starts, text, lc:text.toLowerCase()});
+        arr.push({k, page:pi, y0:r[0], y1:r[1], ws, text, lc:text.toLowerCase()});
       });
     });
     IDX[k]=arr;
@@ -762,26 +878,29 @@ function showHit(){
   markCur();
 }
 
-/* 词在行内拼接文本里的结束位置（下一个词的起点减掉那个空格） */
-function wordEnd(ln,i){
-  return i+1<ln.starts.length ? ln.starts[i+1]-1 : ln.text.length;
-}
-
-/* [字符起点, 字符终点) → 该行内的 [x0, x1]（0~1，按页宽归一化） */
+/* [字符起点, 字符终点) → 该行内的 [x0, x1]（0~1，按页宽归一化）
+   词内优先用逐字符坐标；缺字符坐标时才退回按字宽均分。  */
 function xRange(ln,s,e){
-  let a=-1,b=-1;
-  for(let i=0;i<ln.starts.length;i++){
-    if(wordEnd(ln,i)>s && ln.starts[i]<e){ if(a<0) a=i; b=i; }
+  const ws=ln.ws;
+  let off=0, x0=null, x1=null;
+  for(let wi=0; wi<ws.length; wi++){
+    const w=ws[wi], a=off, b=off+w.t.length;
+    if(e<=a) break;                       /* 命中在前面，收工 */
+    if(s>=b){ off=b+1; continue; }        /* 还没轮到这一词 */
+    const cs=w.cs;
+    const ls=Math.max(s,a)-a;             /* 词内起始字符下标 */
+    const le=Math.min(e,b)-a;             /* 词内结束字符下标（开区间） */
+    if(x0===null){
+      x0 = (cs && cs.length) ? cs[Math.min(ls, cs.length-1)] : w.x0;
+    }
+    x1 = (cs && cs.length) ? (le>=cs.length ? w.x1 : cs[Math.max(0,le)]) : w.x1;
+    off=b+1;
   }
-  if(a<0){ const f=ln.xs[0], l=ln.xs[ln.xs.length-1]; return [f[0], l[1]]; }
-  if(a===b){
-    /* 命中落在某个词的中间：按字符比例在该词内插值，色块贴着字走 */
-    const st=ln.starts[a], en=wordEnd(ln,a), len=Math.max(1,en-st);
-    const x0=ln.xs[a][0], w=ln.xs[a][1]-x0;
-    return [ x0 + w*Math.max(0,Math.min(len,s-st))/len,
-             x0 + w*Math.max(0,Math.min(len,e-st))/len ];
+  if(x0===null){                          /* 兜底：整行 */
+    const f=ws[0], l=ws[ws.length-1];
+    return [f.x0, l.x1];
   }
-  return [ln.xs[a][0], ln.xs[b][1]];
+  return [x0, Math.max(x0, x1===null?x0:x1)];
 }
 
 function runFind(text){
@@ -915,6 +1034,7 @@ document.getElementById('zVal').addEventListener('click',()=>zoomBy(1/state.zoom
   let t0=0, cx=0, cy=0;
   sc.addEventListener('click',e=>{
     if(!e.target.closest('.pg')) return;
+    if(e.target.closest('.textLayer')) return;   /* 双击文字＝选词，和浏览器阅读 PDF 一致 */
     if(performance.now()-(sc._panned||0) < 320) return;      /* 刚拖动过，不算点击 */
     const now=performance.now();
     if(now-t0<360 && Math.abs(e.clientX-cx)<9 && Math.abs(e.clientY-cy)<9){
