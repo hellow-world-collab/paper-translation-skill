@@ -5,6 +5,14 @@ display_name_en: arXiv Paper Chinese Translator
 description: 把论文翻成中文并尽量保持原排版。有 LaTeX 源码（arXiv 链接/ID、.tex 目录、压缩包）时走源码重排，公式、图表、引用、参考文献原位不动；只有 PDF（期刊版、扫描件、arXiv 未给源码）时自动切到 PDF 分支（pdf2zh），逐块覆盖文字层、保留版式与公式。两种分支都能再产出「左原文 / 右译文」的双栏对照 HTML。
 description_zh: 把 arXiv 论文翻成中文且尽量不动原排版：有 LaTeX 源码走源码重排，只有 PDF 走版式保留翻译，另出左原文右译文对照页。
 description_en: Translate arXiv papers into Chinese while keeping the original layout, via LaTeX source rebuild or layout-preserving PDF translation, plus a side-by-side reader.
+examples_zh:
+  - "把 arXiv 2509.09674 翻成中文，公式和排版别动"
+  - "这篇 IEEE 双栏论文只有 PDF，帮我出个中文版"
+  - "翻完给我一个左原文右译文、能搜索的双栏对照页"
+examples_en:
+  - "Translate arXiv 2509.09674 into Chinese without breaking the layout"
+  - "This IEEE paper only comes as a PDF — give me a Chinese version"
+  - "Then produce a side-by-side reader with working search"
 category: productivity
 version: 1.0.0
 author: hellow-world-collab
@@ -180,7 +188,8 @@ python $S/render_html.py ./2509.09674                 # → html/index.html（+ 
 python $S/render_html.py ./2509.09674 --standalone    # 另出单文件版，图片与 KaTeX 全内联
 ```
 
-依赖 `pymupdf`（`pip install pymupdf`）；KaTeX 随 Skill 打包在 `assets/katex/`，离线可用。
+依赖 `pymupdf`（`pip install pymupdf`）；KaTeX 随 Skill 打包，离线可用（仓库里在 `assets/katex/`，
+市场包因为只收两级目录，摊平成 `assets/katex.min.css` 等文件，脚本两种布局都认）。
 
 页面能力：目录侧栏（滚动高亮）、阅读进度条、对照/仅译文/仅原文三档（快捷键 `1`/`2`/`3`）、
 字号调节、深浅色、可点引用、打印样式。三种模式的宽度都做过限制，长公式不会撑破栏宽。
@@ -334,7 +343,7 @@ PY
 
 ## 环境自检
 
-改过脚本、或换到新机器，先跑一遍再干活：
+改过脚本、或换到新机器，先跑一遍再干活（`tests/` 只在 GitHub 仓库里，市场包为控制体积和目录层级没有收录）：
 
 ```bash
 python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py          # 取源码 + 挑字体 + 抽取

@@ -18,7 +18,21 @@ from pathlib import Path
 from _common import MARKER_RE, die, load_json, meta_dir, ok, read_text, warn
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
-KATEX_ROOT = SKILL_ROOT / "assets" / "katex"
+ASSETS_ROOT = SKILL_ROOT / "assets"
+KATEX_ROOT = ASSETS_ROOT / "katex"
+
+
+def katex_asset(*rel: str) -> Path | None:
+    """定位 KaTeX 文件，两种布局都认。
+
+    仓库里是 `assets/katex/katex.min.css`（上游原样，含 fonts/）；
+    技能市场包只允许两级目录，所以打包时压成扁平的 `assets/katex.min.css`
+    （字体已内联成 data URI）和 `assets/auto-render.min.js`。
+    """
+    for p in (KATEX_ROOT.joinpath(*rel), ASSETS_ROOT / rel[-1]):
+        if p.is_file():
+            return p
+    return None
 
 # --------------------------------------------------------------------------
 # 结构扫描
@@ -984,15 +998,18 @@ def _unmask(text: str, protected: list[str]) -> str:
 # --------------------------------------------------------------------------
 
 def katex_assets(inline: bool, out_dir: Path) -> tuple[str, str]:
-    if not KATEX_ROOT.is_dir():
+    css_src = katex_asset("katex.min.css")
+    js_src = katex_asset("katex.min.js")
+    ar_src = katex_asset("contrib", "auto-render.min.js")
+    if not (css_src and js_src and ar_src):
         warn("缺少 KaTeX 资源，公式将以原始 LaTeX 显示")
         return "", ""
     if inline:
-        css = read_text(KATEX_ROOT / "katex.min.css")
+        css = read_text(css_src)
 
         def repl(m):
             name = m.group(1)
-            f = KATEX_ROOT / name
+            f = css_src.parent / name
             if not f.is_file():
                 return m.group(0)
             mime = "font/woff2" if name.endswith(".woff2") else (
@@ -1001,18 +1018,19 @@ def katex_assets(inline: bool, out_dir: Path) -> tuple[str, str]:
             return "url(data:%s;base64,%s)" % (mime, b64)
 
         css = re.sub(r"url\((fonts/[^)]+)\)", repl, css)
-        js = read_text(KATEX_ROOT / "katex.min.js")
-        ar = read_text(KATEX_ROOT / "contrib" / "auto-render.min.js")
         return ("<style>%s</style>" % css,
-                "<script>%s</script><script>%s</script>" % (js, ar))
+                "<script>%s</script><script>%s</script>" % (read_text(js_src), read_text(ar_src)))
 
     dst = out_dir / "assets" / "katex"
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(KATEX_ROOT, dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    for src in (css_src, js_src, ar_src):
+        shutil.copy2(src, dst / src.name)
+    fonts = css_src.parent / "fonts"
+    if fonts.is_dir():
+        shutil.copytree(fonts, dst / "fonts", dirs_exist_ok=True)
     return ('<link rel="stylesheet" href="assets/katex/katex.min.css">',
             '<script src="assets/katex/katex.min.js"></script>'
-            '<script src="assets/katex/contrib/auto-render.min.js"></script>')
+            '<script src="assets/katex/auto-render.min.js"></script>')
 
 
 CSS = """

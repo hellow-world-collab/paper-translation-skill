@@ -193,6 +193,7 @@ scripts/
   pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
   pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
   pending.py             待译片段清单
+  package_market.py      打技能市场包（压平 KaTeX、剔开发资源、自检层级与体积）
   _common.py             路径、原子写、JSON 读写、编译参数
 assets/
   compare_template.html  对照页模板
@@ -200,7 +201,7 @@ assets/
 docs/images/             README 截图（真实产出，不是效果图）
 rules/
   packages.yaml          宏包级 / 源码级坑与自动修法
-  papers/                单篇论文的特殊处理记录
+  papers-2508.08241.md   单篇论文的特殊处理记录（摊平，市场包只收两级目录）
 tests/
   run_compat.py          兼容性自检：12 个最小工程跑通全流程
   cases/                 每个 case 一个易翻车的写法
