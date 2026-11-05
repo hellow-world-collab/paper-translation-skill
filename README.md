@@ -108,21 +108,13 @@
 ## 流水线
 
 ```mermaid
-flowchart LR
-    A["arXiv ID / .tex / .zip"] --> R{"route.py"}
-    A2["只有 .pdf"] --> R
-    R -->|LaTeX| F["fetch<br/>取源码、认主文件"]
-    F --> P["preflight<br/>基线编译"]
-    P --> J["inject_cjk<br/>注入中文字体"]
-    J --> E["extract<br/>切段 + 打标记"]
-    E --> T["模型逐段翻译"]
-    T --> AP["apply<br/>回填 → 新 .tex"]
-    AP --> B["build<br/>XeLaTeX 编译"]
-    B --> AU["audit<br/>页数 / 覆盖率 / 图表"]
-    R -->|PDF| PZ["pdf2zh<br/>逐块覆盖"]
-    AU --> O["中文 PDF"]
-    PZ --> O
-    O --> C["render_compare<br/>双栏对照页"]
+flowchart TD
+    A["arXiv ID / .tex 目录 / PDF"] --> R{"route.py"}
+    R -->|LaTeX| L["fetch → inject → extract<br/>翻译 → apply → build"]
+    R -->|PDF| P["pdf2zh 逐块覆盖"]
+    L --> O["中文 PDF"]
+    P --> O
+    O --> C["render_compare 双栏对照页"]
 ```
 
 ## 安装
