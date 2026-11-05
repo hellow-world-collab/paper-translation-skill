@@ -25,29 +25,33 @@ agent_created: true
 
 ## 第 -1 步：环境自检（缺什么装什么，别让用户自己去折腾）
 
-动手前先跑一遍，缺哪个补哪个，装完再往下走：
+动手前先跑一次：
 
 ```bash
-xelatex --version          # LaTeX 分支必需
-pdftoppm -v                # 审计出图、对照页必需（poppler）
-python -c "import fitz"    # 只有渲染 HTML 时才要 pymupdf
+python ~/.workbuddy/skills/arxiv-zh-tex/scripts/env_check.py    # 加 --json 给脚本读
 ```
 
-| 系统 | 装 XeLaTeX | 备注 |
+它逐个打勾 `xelatex` / `pdftoppm` / `pymupdf` / Python 版本，缺的连安装命令一起打印。
+**不要跳过这一步直接开编译**：Windows 上 MiKTeX 通常不在 PATH，`env_check.py` 会去常见安装位置找，
+比手敲 `xelatex --version` 可靠；退出码 1 表示缺 xelatex。
+
+缺 XeLaTeX 时按系统装（其余依赖的安装命令脚本会自己给出）：
+
+| 系统 | 命令 | 备注 |
 |---|---|---|
-| Windows | `winget install --id MiKTeX.MiKTeX -e`（没 winget 就 `choco install miktex`） | 装完把 `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64` 补进 PATH；MiKTeX 首次编译自动拉宏包 |
+| Windows | `winget install --id MiKTeX.MiKTeX -e`（没 winget 就 `choco install miktex`） | 装完把 `%LOCALAPPDATA%\Programs\MiKTeX\miktex\bin\x64` 补进 PATH；首次编译自动拉宏包 |
 | macOS | `brew install --cask basictex` | 再 `sudo tlmgr install xetex ctex`；完整版 `mactex-no-gui` 约 5 GB，先问用户要不要 |
 | Debian / Ubuntu | `sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk` | 中文字体另装 `fonts-noto-cjk` 或 `fonts-fandol` |
 | Fedora | `sudo dnf install texlive-xetex texlive-collection-langchinese` | |
 | Arch | `sudo pacman -S texlive-core texlive-langchinese` | |
 
 `pdftoppm` 来自 poppler：Windows `winget install --id oschwartz10612.Poppler -e`，macOS `brew install poppler`，
-Debian/Ubuntu `sudo apt install poppler-utils`。装完命令若仍找不到，重开一个 shell 或把 bin 目录加进 PATH。
+Debian/Ubuntu `sudo apt install poppler-utils`。装完命令仍找不到，重开一个 shell 或把 bin 目录加进 PATH。
 
 Python 侧：渲染 HTML 要 `python -m pip install pymupdf`；PDF 分支**不要用系统的 3.13**——
 `python scripts/pdf_mode.py <项目> --install` 会用 3.10–3.12 自建 `.venv-pdf`（几百 MB，只建一次）。
 
-装完再跑一次 `xelatex --version` 确认出版本号，然后进第零步。确实是内网、没有包管理器这种情况，
+装完重跑 `env_check.py`，出现 ✓ 再进第零步。确实是内网、没有包管理器这种情况，
 给用户官网链接和一句手动步骤即可，不要卡在这里反复重试。
 
 ## 第零步：先分流——有源码走源码，没源码走 PDF

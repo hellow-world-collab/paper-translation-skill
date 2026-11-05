@@ -135,6 +135,12 @@ PDF 分支要单独建环境（几百 MB，只建一次）：
 python ~/.workbuddy/skills/arxiv-zh-tex/scripts/pdf_mode.py --project . --install
 ```
 
+不确定环境齐不齐，先跑一句自检（缺什么会连安装命令一起打印）：
+
+```bash
+python ~/.workbuddy/skills/arxiv-zh-tex/scripts/env_check.py
+```
+
 也可以在对话里直接说「装一下 https://github.com/hellow-world-collab/paper-translation-skill，
 目录名用 arxiv-zh-tex」，Agent 会 clone 到正确位置。
 
@@ -194,6 +200,7 @@ scripts/
   pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
   pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
   pending.py             待译片段清单
+  env_check.py           环境自检：xelatex / pdftoppm / pymupdf / Python 版本
   package_market.py      打技能市场包（压平 KaTeX、剔开发资源、自检层级与体积）
   _common.py             路径、原子写、JSON 读写、编译参数
 assets/
