@@ -1,5 +1,7 @@
 # arxiv-zh-tex
 
+**MIT** · Python 3.10+ · XeLaTeX / MiKTeX · 无需 GPU
+
 把 arXiv 论文翻成中文，并且**尽量不动原排版**——公式、图表、编号、交叉引用、参考文献都留在原位。
 
 一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
@@ -121,3 +123,18 @@ python $S/pdf_mode.py 论文.pdf --project ./x --check      # 只体检，不翻
   并把 `HF_ENDPOINT` 指到镜像。
 - **Type1 字体包**：`newtxtext`/`txfonts` 等在 XeLaTeX 下会让中文**静默消失**
   （0 错误、页数正常、一个字都没有）。`inject_cjk.py` 会自动换成 OpenType 等价物。
+
+## 许可证
+
+本仓库代码以 [MIT License](LICENSE) 发布，可自由使用、修改、商用，保留版权声明即可。
+
+第三方组件：
+
+| 组件 | 许可证 | 说明 |
+|---|---|---|
+| [KaTeX](https://github.com/KaTeX/KaTeX)（`assets/katex/`） | MIT | 内置，用于对照页公式渲染 |
+| [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | AGPL-3.0 / 商业双许可 | 运行期依赖，用于取页面位图与文字层；商用请自行评估 |
+| [pdf2zh / PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)（`pdf2zh==1.9.11`） | AGPL-3.0 | **可选**，仅 PDF 分支使用；不用该分支则不涉及 |
+
+论文本身的版权归原作者，本工具只做个人阅读用途的格式转换；译文与原文的再分发请遵守原论文许可。
+
