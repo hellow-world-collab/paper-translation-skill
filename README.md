@@ -27,10 +27,11 @@
   <a href="#已知限制">已知限制</a>
 </p>
 
-![双栏对照页实拍：左为英文原文，右为中文译文](docs/images/showcase-compare.png)
+![双栏对照页实拍：左为英文原文，右为中文译文，搜 model 双栏共 141 处命中](docs/images/showcase-compare-dmo.png)
 
 <p align="center">
-  <sub><i>SimpleVLA-RL（arXiv 2509.09674）的真实产出：左 24 页原文 / 右 21 页中文，逐页对照、按节自动对齐。截图未经修饰。</i></sub>
+  <sub><i>DMO（arXiv 2509.00215）的真实产出，截自最终版对照页：左 22 页原文 / 右 21 页中文，
+  逐页对照、按节自动对齐；页面由 pdf.js 现渲，搜 <code>model</code> 双栏共 141 处命中。截图未经修饰。</i></sub>
 </p>
 
 一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
@@ -67,7 +68,7 @@
 ## 对照页
 
 `render_compare.py` 把两份 PDF 原样逐页并排呈现。页数不一致是正常的（中文字距紧、
-行距小，24 页对 21 页），靠书签锚点让「同一节」对齐，而不是「同一页」。
+行距小，22 页对 21 页），靠书签锚点让「同一节」对齐，而不是「同一页」。
 
 页面不是图片，是把 PDF 交给浏览器里的 **pdf.js 现渲**：canvas 位图尺寸按
 「CSS 宽 × devicePixelRatio」实时算，缩放一次重绘一次，所以 100% 锐、放大到 400% 一样锐，
@@ -322,7 +323,7 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 
 本仓库代码以 [MIT License](LICENSE) 发布，可自由使用、修改、商用，保留版权声明即可。
 
-`docs/images/` 里的截图来自 arXiv 论文 *SimpleVLA-RL* 的译排结果，仅作效果展示；
+`docs/images/` 里的截图来自 arXiv 论文 *SimpleVLA-RL*（2509.09674）与 *DMO*（2509.00215）的译排结果，仅作效果展示；
 原文版权归原作者，公开分发译文前请确认原论文的改编与再分发许可。
 
 第三方组件：
