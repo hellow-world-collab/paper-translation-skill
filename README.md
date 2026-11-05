@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/icon-256.png" width="116" alt="arxiv-zh-tex">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/icon.png">
+    <img src="assets/icon-dark.png" width="104" alt="arxiv-zh-tex">
+  </picture>
 </p>
 
 <h1 align="center">arxiv-zh-tex</h1>
@@ -33,7 +36,16 @@
 一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
 输出是**可重编译的中文 PDF**，外加一个「左原文 / 右译文」的页面对照网页。
 
-## 它保证什么
+## 译出来是什么样
+
+<p align="center">
+  <img src="docs/images/showcase-page.png" width="620" alt="中文译文首页：标题、摘要、图 1 与图注">
+</p>
+
+<p align="center">
+  <sub>编译产物的第 1 页（A4，矢量）：标题、摘要、图注已译；图 1 是原论文的矢量图，<br>
+  图内英文标注按设计保留——要让图里也变中文，只能重画。</sub>
+</p>
 
 - **排版不动**：在原作者自己的类文件里换字，不另起炉灶重排。图、表、编号、`\ref` 的指向都跟原文一致。
 - **公式不动**：模型看到的是 `⟪P0007⟫` 这样的占位标记，回填时只替换标记内的自然语言。数学符号没有机会被写坏。
