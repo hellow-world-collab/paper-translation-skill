@@ -224,22 +224,22 @@ tests/
 ## LaTeX 兼容性
 
 `tests/cases/` 是 12 个最小工程，每个只针对一类容易出问题的写法。
-下表是最近一次全量结果（Windows 11 / MiKTeX 25.12 / XeLaTeX，逐个真实编译验证）：
+最近一次全量结果：Windows 11 / MiKTeX 25.12 / XeLaTeX，逐个真实编译，**12 个样本全部 0 错误**。
 
-| 场景 | 样本 | 结果 | 说明 |
-|---|---|---|---|
-| 标准文档类 + `\input` 拆章节 | `article-input` | ✅ 0 错误 | 被 include 的文件一并抽取、一并回填 |
-| 双栏 IEEE | `ieeetran` | ✅ 0 错误 | `Abstract`→摘要、`Index Terms`→关键词 |
-| APS 期刊 | `revtex` | ✅ 0 错误 | revtex4-2 双栏 + 交叉引用 |
-| Elsevier | `elsarticle` | ✅ 0 错误 | frontmatter / keyword 正常 |
-| Springer LNCS | `llncs` | ✅ 0 错误 | |
-| ACM | `acmart` | ✅ 0 错误 | 首次编译要装依赖，约 2 分钟 |
-| 幻灯片 | `beamer` | ✅ 0 错误 | 帧标题、block 标题也会译 |
-| 代码清单 | `minted` | ✅ 0 错误 | 自动加 `-shell-escape`，前缀变「代码 1:」 |
-| natbib + bibtex | `article-input` | ✅ 0 错误 | 文献表正常生成 |
-| biblatex + biber | `biblatex` | ✅ 0 错误 | 自动选 `biber`，不再错跑 bibtex |
-| 字体包藏在 `\input{preamble}` | `preamble-type1` | ✅ 0 错误 | 会连被 include 的文件一起摘掉 Type1 |
-| `00README.json` 指定主文件 | `readme-toplevel` | ✅ 0 错误 | 认 `usage: toplevel`，不被体量更大的诱饵骗走 |
+| 场景 | 样本 | 说明 |
+|---|---|---|
+| 标准文档类 + `\input` 拆章节 | `article-input` | 被 include 的文件一并抽取、一并回填 |
+| 双栏 IEEE | `ieeetran` | `Abstract`→摘要、`Index Terms`→关键词 |
+| APS 期刊 | `revtex` | revtex4-2 双栏 + 交叉引用 |
+| Elsevier | `elsarticle` | frontmatter / keyword 正常 |
+| Springer LNCS | `llncs` | |
+| ACM | `acmart` | 首次编译要装依赖，约 2 分钟 |
+| 幻灯片 | `beamer` | 帧标题、block 标题也会译 |
+| 代码清单 | `minted` | 自动加 `-shell-escape`，前缀变「代码 1:」 |
+| natbib + bibtex | `article-input` | 文献表正常生成 |
+| biblatex + biber | `biblatex` | 自动选 `biber`，不再错跑 bibtex |
+| 字体包藏在 `\input{preamble}` | `preamble-type1` | 会连被 include 的文件一起摘掉 Type1 |
+| `00README.json` 指定主文件 | `readme-toplevel` | 认 `usage: toplevel`，不被体量更大的诱饵骗走 |
 
 **会翻的**：正文、章节标题、图表题注（含子图）、表格单元格、`\item` 术语、脚注、
 摘要、关键词、beamer 帧标题、算法标题、作者与单位、页眉。
