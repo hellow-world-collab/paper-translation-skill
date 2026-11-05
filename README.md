@@ -1,15 +1,117 @@
 <p align="center">
-  <img src="assets/icon-256.png" width="112" alt="arxiv-zh-tex">
+  <img src="assets/icon-256.png" width="116" alt="arxiv-zh-tex">
 </p>
 
 <h1 align="center">arxiv-zh-tex</h1>
 
-<p align="center"><b>MIT</b> · Python 3.10+ · XeLaTeX / MiKTeX · 无需 GPU</p>
+<p align="center">
+  把 arXiv 论文翻成中文，<b>公式、图表、编号、交叉引用、参考文献全部留在原位</b>。
+</p>
 
-把 arXiv 论文翻成中文，并且**尽量不动原排版**——公式、图表、编号、交叉引用、参考文献都留在原位。
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3fb950?style=flat-square" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/XeLaTeX-MiKTeX%20%7C%20TeX%20Live-008080?style=flat-square" alt="XeLaTeX">
+  <img src="https://img.shields.io/badge/tests-12%2F12%20passed-2ea44f?style=flat-square" alt="12/12 tests">
+</p>
+
+<p align="center">
+  <a href="#安装">安装</a> ·
+  <a href="#两条分支">两条分支</a> ·
+  <a href="#对照页">对照页</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#latex-兼容性">兼容性</a> ·
+  <a href="#已知限制">已知限制</a>
+</p>
+
+![双栏对照页实拍：左为英文原文，右为中文译文](docs/images/showcase-compare.png)
+
+<p align="center">
+  <sub><i>SimpleVLA-RL（arXiv 2509.09674）的真实产出：左 24 页原文 / 右 21 页中文，逐页对照、按节自动对齐。截图未经修饰。</i></sub>
+</p>
 
 一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
-输出是中文 PDF，外加一个「左原文 / 右译文」的页面对照网页。
+输出是**可重编译的中文 PDF**，外加一个「左原文 / 右译文」的页面对照网页。
+
+## 它保证什么
+
+- **排版不动**：在原作者自己的类文件里换字，不另起炉灶重排。图、表、编号、`\ref` 的指向都跟原文一致。
+- **公式不动**：模型看到的是 `⟪P0007⟫` 这样的占位标记，回填时只替换标记内的自然语言。数学符号没有机会被写坏。
+- **可以核对**：每一段译文都记着它来自哪个源片段；`audit.py` 给出页数、中文覆盖率、图表数量，`check_tr.py` 找出缺译和成片英文。
+
+## 两条分支
+
+| 输入 | 分支 | 产物 | 质量 |
+|---|---|---|---|
+| arXiv ID / abs、pdf 链接 / `.tex` 目录 / `.zip` `.tar.gz` | **LaTeX**（主链） | 重新编译的中文 PDF | 公式、编号、交叉引用都是真 LaTeX，上限最高 |
+| 只有 `.pdf`：期刊排版、arXiv 没放源码 | **PDF**（pdf2zh） | `<论文>_中文版.pdf` | 版式 1:1 保留，公式是原图 |
+
+`route.py` 负责判断走哪条；`--mode latex|pdf` 可以强制指定。
+两条分支最后都能接 `render_compare.py` 出双栏对照页。
+
+> **PDF 分支不是 OCR。** 它读的是 PDF 的文字层（矢量文本 + 位置），逐块翻译后按原 bbox
+> 覆盖回去。扫描件（纯图片 PDF）没有文字层，必须先做 OCR——不在本技能范围内。
+
+## 对照页
+
+`render_compare.py` 把两份 PDF 逐页渲成图，左右并排。页数不一致是正常的（中文字距紧、
+行距小，24 页对 21 页），靠书签锚点让「同一节」对齐，而不是「同一页」。
+
+![对照页内置搜索：搜 VLA，双栏 458 处命中](docs/images/showcase-search.png)
+
+<p align="center">
+  <sub><code>Ctrl/⌘+F</code> 搜 <code>VLA</code>：命中按词画框（当前项橙色、其余淡黄），滚动条旁有命中刻度。截图是双栏视图，共 458 处。</sub>
+</p>
+
+页面本身是图片，浏览器自带的查找搜不到正文，所以渲染时把 PDF 文字层里每个词连同横坐标
+一起抽进 `META`，前端做子串匹配——所以它是真的「搜得到、看得见」：
+
+- **逐词高亮**：按词画框，不是整行横带。缩放、翻页、换视图后位置自动重算。
+- **只搜当前栏**：单栏视图就只搜这一栏，双栏两边都搜，切视图命中自动重算——不会把视图切走。
+- **命中计数与刻度**：`1/458` 这样的计数 + 滚动条旁的刻度条，长论文里知道命中散落在哪。
+- **联动 / 各自滚动**：拖动任意一栏，另一栏按锚点插值跟位
+- **浏览器式缩放**：`Ctrl/⌘ + 滚轮` 以指针为锚点、双击 100%↔220%、双指捏合，40%–400%
+- **快捷键**：目录跳转、页码输入、`[`/`]` 翻页、`L` 联动、`F`/`0` 复位、`⇄` 交换左右
+
+![单栏译文视图：公式 1 2 3 是真 LaTeX 数学](docs/images/showcase-single.png)
+
+<p align="center">
+  <sub>单栏视图（「译文」按钮）：公式 (1)(2)(3) 是真 LaTeX 数学而不是截图，术语与符号沿用原文。</sub>
+</p>
+
+## 核心原则：模型永远不生成 TeX 语法
+
+源码被切成自然语言片段，公式、命令、引用、数值替换成 `⟪P0001⟫` 这样的标记交给模型；
+回填时只替换片段内的文字，标记还原成原文。
+
+```latex
+原文      \caption{We train a VLA policy on 20k trajectories.}
+给模型看  \caption{⟪P0007⟫We train a VLA policy on 20k trajectories.}
+回填之后  \caption{我们在 2 万条轨迹上训练 VLA 策略。}
+```
+
+公式和结构因此从根本上不可能被改坏。产出是**纯中文版**（不是中英混排）；图里烧死的英文、
+代码清单、参考文献条目一律不译。
+
+## 流水线
+
+```mermaid
+flowchart LR
+    A["arXiv ID / .tex / .zip"] --> R{"route.py"}
+    A2["只有 .pdf"] --> R
+    R -->|LaTeX| F["fetch<br/>取源码、认主文件"]
+    F --> P["preflight<br/>基线编译"]
+    P --> J["inject_cjk<br/>注入中文字体"]
+    J --> E["extract<br/>切段 + 打标记"]
+    E --> T["模型逐段翻译"]
+    T --> AP["apply<br/>回填 → 新 .tex"]
+    AP --> B["build<br/>XeLaTeX 编译"]
+    B --> AU["audit<br/>页数 / 覆盖率 / 图表"]
+    R -->|PDF| PZ["pdf2zh<br/>逐块覆盖"]
+    AU --> O["中文 PDF"]
+    PZ --> O
+    O --> C["render_compare<br/>双栏对照页"]
+```
 
 ## 安装
 
@@ -29,71 +131,6 @@ python ~/.workbuddy/skills/arxiv-zh-tex/scripts/pdf_mode.py --project . --instal
 
 也可以在对话里直接说「装一下 https://github.com/hellow-world-collab/paper-translation-skill，
 目录名用 arxiv-zh-tex」，Agent 会 clone 到正确位置。
-
-## 两条分支
-
-| 输入 | 分支 | 产物 | 质量 |
-|---|---|---|---|
-| arXiv ID / abs、pdf 链接 / `.tex` 目录 / `.zip` `.tar.gz` | **LaTeX**（主链） | 重新编译的中文 PDF | 公式、编号、交叉引用都是真 LaTeX，上限最高 |
-| 只有 `.pdf`：期刊排版、arXiv 没放源码 | **PDF**（pdf2zh） | `<论文>_中文版.pdf` | 版式 1:1 保留，公式是原图 |
-
-`route.py` 负责判断走哪条；`--mode latex|pdf` 可以强制指定。
-两条分支最后都能接 `render_compare.py` 出双栏对照页。
-
-> **PDF 分支不是 OCR。** 它读的是 PDF 的文字层（矢量文本 + 位置），逐块翻译后按原 bbox
-> 覆盖回去。扫描件（纯图片 PDF）没有文字层，必须先做 OCR——不在本技能范围内。
-
-## 核心原则
-
-**模型永远不生成 TeX 语法。** 源码被切成自然语言片段，公式、命令、引用、数值替换成
-`⟪P0001⟫` 这样的标记交给模型；回填时只替换片段内的文字，标记还原成原文。
-公式和结构从根本上不可能被改坏。
-
-产出是**纯中文版**（不是中英混排）。图里烧死的英文、代码清单、参考文献条目一律不译。
-
-## 目录结构
-
-```
-SKILL.md                 技能主文档（流程、命令、踩坑表）
-glossary.tsv             术语表：先到先得的译名锁定
-scripts/
-  route.py               第零步：判断 LaTeX / PDF 分支
-  fetch.py               取源码（e-print）、认主文件 → manifest.json
-  preflight.py           基线编译 + xetex 探测
-  inject_cjk.py          注入中文字体（带哨兵验证）
-  extract.py             切段、抽标记 → segments.json
-  apply.py               回填译文 → 新的 .tex
-  check_tr.py            译文体检（缺译 / 中文过少 / 成片英文）
-  build.py               编译（内部先跑 check_tr）
-  audit.py               产物审计（页数、中文覆盖率、图表数量、参考文献）
-  render_html.py         段落级重排网页（旧版，可选）
-  render_compare.py      页面对照页（左原文图 / 右译文图）
-  pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
-  pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
-  pending.py             待译片段清单
-  _common.py            路径、原子写、JSON 读写、编译参数
-assets/
-  compare_template.html  对照页模板
-  katex/                 KaTeX（离线渲染公式用）
-rules/
-  packages.yaml          宏包级 / 源码级坑与自动修法
-  papers/                单篇论文的特殊处理记录
-tests/
-  run_compat.py          兼容性自检：12 个最小工程跑通全流程
-  cases/                 每个 case 一个易翻车的写法
-```
-
-## 依赖
-
-- **LaTeX 分支**：XeLaTeX（TeX Live / MiKTeX 均可）、`pdftoppm`（审计出图用）。
-  中文字体：Windows 用 SimSun/微软雅黑，Linux 用 Fandol 或 Noto CJK。
-- **PDF 分支**：Python **3.10–3.12**（`pdf2zh` 的元数据写了 `<3.13`）+ `pymupdf`。
-  首次跑 `pdf_mode.py ... --install` 会自动建 `.venv-pdf` 并装好钉死版本：
-  `pdf2zh==1.9.11`、`tencentcloud-sdk-python-tmt==3.0.1478`。
-  翻译器是仓库自带的 `scripts/pdf_translate.py`，**不需要**另外安装
-  `pdf-formula-translate` 技能（装了也只是备选）。
-- 核心链路（fetch → preflight → inject → apply → build → audit）**只用标准库**，
-  第三方依赖只有渲染两个 HTML 时才需要 `pymupdf`。
 
 ## 快速开始
 
@@ -131,6 +168,54 @@ python $S/pdf_mode.py 论文.pdf --project ./x --check      # 只体检，不翻
 python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
 ```
 
+## 目录结构
+
+```
+SKILL.md                 技能主文档（流程、命令、踩坑表）
+glossary.tsv             术语表：先到先得的译名锁定
+scripts/
+  route.py               第零步：判断 LaTeX / PDF 分支
+  fetch.py               取源码（e-print）、认主文件 → manifest.json
+  preflight.py           基线编译 + xetex 探测
+  inject_cjk.py          注入中文字体（带哨兵验证）
+  extract.py             切段、抽标记 → segments.json
+  apply.py               回填译文 → 新的 .tex
+  check_tr.py            译文体检（缺译 / 中文过少 / 成片英文）
+  build.py               编译（内部先跑 check_tr）
+  audit.py               产物审计（页数、中文覆盖率、图表数量、参考文献）
+  render_html.py         段落级重排网页（旧版，可选）
+  render_compare.py      页面对照页（左原文图 / 右译文图）
+  pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
+  pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
+  pending.py             待译片段清单
+  _common.py             路径、原子写、JSON 读写、编译参数
+assets/
+  compare_template.html  对照页模板
+  katex/                 KaTeX（离线渲染公式用）
+docs/images/             README 截图（真实产出，不是效果图）
+rules/
+  packages.yaml          宏包级 / 源码级坑与自动修法
+  papers/                单篇论文的特殊处理记录
+tests/
+  run_compat.py          兼容性自检：12 个最小工程跑通全流程
+  cases/                 每个 case 一个易翻车的写法
+```
+
+工程里的中间产物都在 `.arz/`：`manifest.json`（主文件与结构）、`segments.json`（原文片段 +
+标记位置）、`translations.json`（译文）、`check_tr.json`、`audit.md`（审计报告）。
+
+## 依赖
+
+- **LaTeX 分支**：XeLaTeX（TeX Live / MiKTeX 均可）、`pdftoppm`（审计出图用）。
+  中文字体：Windows 用 SimSun/微软雅黑，Linux 用 Fandol 或 Noto CJK。
+- **PDF 分支**：Python **3.10–3.12**（`pdf2zh` 的元数据写了 `<3.13`）+ `pymupdf`。
+  首次跑 `pdf_mode.py ... --install` 会自动建 `.venv-pdf` 并装好钉死版本：
+  `pdf2zh==1.9.11`、`tencentcloud-sdk-python-tmt==3.0.1478`。
+  翻译器是仓库自带的 `scripts/pdf_translate.py`，**不需要**另外安装
+  `pdf-formula-translate` 技能（装了也只是备选）。
+- 核心链路（fetch → preflight → inject → apply → build → audit）**只用标准库**，
+  第三方依赖只有渲染两个 HTML 时才需要 `pymupdf`。
+
 ## LaTeX 兼容性
 
 `tests/cases/` 是 12 个最小工程，每个只针对一类容易出问题的写法。
@@ -156,19 +241,6 @@ python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
 
 **不翻的**：公式、图内文字（`tikz`/`pgfplots` 整体跳过）、伪代码、`\verb`、
 参考文献条目，以及 `\label` / `\cite` / `\ref` / `\includegraphics` 等命令参数。
-
-## 对照页
-
-`render_compare.py` 把两份 PDF 逐页渲成图，左右并排；页数不一致是正常的
-（中文字距紧、行距小，21 页对 24 页），靠书签锚点让「同一节」对齐而不是「同一页」。
-
-- **联动 / 各自滚动**：拖动任意一栏，另一栏按锚点插值跟位
-- **浏览器式缩放**：`Ctrl/⌘ + 滚轮` 以指针为锚点、双击 100%↔220%、双指捏合，40%–400%
-- **浏览器式搜索**：`Ctrl/⌘+F`。页面是图片，浏览器自带查找搜不到正文，所以渲染时把
-  PDF 文字层的每个词连同横坐标抽进 `META`，前端做子串匹配——所有命中都上色（当前橙色、
-  其余淡黄），按词画框而不是整行横带，滚动条旁有命中刻度。**单栏视图只搜当前这一栏**，
-  双栏两边都搜，切视图命中自动重算。
-- 目录跳转、页码输入、`[`/`]` 翻页、`L` 联动、`F`/`0` 复位、`⇄` 交换左右
 
 ## 已验证的真实论文
 
@@ -202,6 +274,9 @@ python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
 
 本仓库代码以 [MIT License](LICENSE) 发布，可自由使用、修改、商用，保留版权声明即可。
 
+`docs/images/` 里的截图来自 arXiv 论文 *SimpleVLA-RL* 的译排结果，仅作效果展示；
+原文版权归原作者，公开分发译文前请确认原论文的改编与再分发许可。
+
 第三方组件：
 
 | 组件 | 许可证 | 说明 |
@@ -211,4 +286,3 @@ python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
 | [pdf2zh / PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate)（`pdf2zh==1.9.11`） | AGPL-3.0 | **可选**，仅 PDF 分支使用；不用该分支则不涉及 |
 
 论文本身的版权归原作者，本工具只做个人阅读用途的格式转换；译文与原文的再分发请遵守原论文许可。
-
