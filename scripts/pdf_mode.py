@@ -222,7 +222,7 @@ def fetch_pdf(url: str, dest: Path) -> Path:
 # --------------------------------------------------------------------------- #
 def main() -> int:
     ap = argparse.ArgumentParser(description="用 pdf-formula-translate 处理只有 PDF 的论文")
-    ap.add_argument("input", help="PDF 路径或 http(s) 链接")
+    ap.add_argument("input", nargs="?", default="", help="PDF 路径或 http(s) 链接")
     ap.add_argument("--project", required=True, help="项目目录（产物统一放这里）")
     ap.add_argument("--service", default="bing",
                     help="翻译后端，默认 bing（国内可达）；google 在部分网络下 502")
@@ -231,7 +231,7 @@ def main() -> int:
     ap.add_argument("--pages", default="", help="只翻指定页，1 起，如 1,3-5")
     ap.add_argument("--thread", type=int, default=4)
     ap.add_argument("--python", default=None, help="指定 Python 解释器（需能 import pdf2zh）")
-    ap.add_argument("--compare", action="store_true", help="产出后直接生成三栏对照页")
+    ap.add_argument("--compare", action="store_true", help="产出后直接生成双栏对照页")
     ap.add_argument("--title", default="")
     ap.add_argument("--check", action="store_true", help="只体检，不翻译")
     ap.add_argument("--install", action="store_true", help=f"在 .venv-pdf 里装 {PINNED}")
@@ -292,6 +292,8 @@ def main() -> int:
 
     # ---- 4. 输入 ----
     src = args.input.strip()
+    if not src:
+        die("缺少输入：给一个 PDF 路径或 http(s) 链接")
     if src.lower().startswith(("http://", "https://")):
         stem = src.rstrip("/").split("/")[-1] or "paper"
         stem = stem.replace(".pdf", "")

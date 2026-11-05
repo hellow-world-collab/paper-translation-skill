@@ -1,11 +1,34 @@
-# arxiv-zh-tex
+<p align="center">
+  <img src="assets/icon-256.png" width="112" alt="arxiv-zh-tex">
+</p>
 
-**MIT** · Python 3.10+ · XeLaTeX / MiKTeX · 无需 GPU
+<h1 align="center">arxiv-zh-tex</h1>
+
+<p align="center"><b>MIT</b> · Python 3.10+ · XeLaTeX / MiKTeX · 无需 GPU</p>
 
 把 arXiv 论文翻成中文，并且**尽量不动原排版**——公式、图表、编号、交叉引用、参考文献都留在原位。
 
 一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
 输出是中文 PDF，外加一个「左原文 / 右译文」的页面对照网页。
+
+## 安装
+
+```bash
+git clone https://github.com/hellow-world-collab/paper-translation-skill.git \
+  ~/.workbuddy/skills/arxiv-zh-tex
+```
+
+**目录名必须是 `arxiv-zh-tex`**——SKILL.md 里的命令按这个路径写。Claude Code 用户把
+`~/.workbuddy/skills` 换成 `~/.claude/skills` 即可。
+
+LaTeX 分支零额外依赖，装了 XeLaTeX 就能跑。PDF 分支要单独建环境（几百 MB，只建一次）：
+
+```bash
+python ~/.workbuddy/skills/arxiv-zh-tex/scripts/pdf_mode.py --project . --install
+```
+
+也可以在对话里直接说「装一下 https://github.com/hellow-world-collab/paper-translation-skill，
+目录名用 arxiv-zh-tex」，Agent 会 clone 到正确位置。
 
 ## 两条分支
 
