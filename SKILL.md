@@ -319,7 +319,7 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 |---|---|---|
 | ~~对照页看着比直接开 PDF 糊~~ | 旧版页面是预渲染位图（最多 1836 px），放大或高分屏下必然被拉伸；先换 WebP 3.0× 只到 PDF 的 81%，治不了根 | **v1.0.2 已改架构**：页面改由 pdf.js 现渲，位图尺寸 = CSS 宽 × dpr，缩放即重绘；实测 dpr=2 下 50%/100%/200% 的 canvas 与显示像素比恒为 2.00，260% 时 1.85（受单页 12 Mpx 上限保护，仍远好于旧版拉伸） |
 | ~~正文选不中、复制出来是图~~ | canvas 上只有像素 | 每页渲完叠一层透明 textLayer（见「渲染架构」一节）；只给 span 开 `pointer-events`，空白处双击放大照旧 |
-| 搜索高亮在中文侧偏半个字 | 一个词只有首尾坐标时，前端按「字符数平均」内插；中文整行没空格、一个词就是一行，混排处必然偏 | `page_words` 存词内**逐字符**起点 x，命中框直接取字形边界；`SimpleVLA-RL:` 这类混排词实测旧算法少覆盖 2/3 个字 |
+| 搜索高亮在中文侧偏半个字 | 一个词只有首尾坐标时，前端按「字符数平均」内插；中文整行没空格、一个词就是一行，混排处必然偏 | `page_words` 存词内**逐字符**起点 x，命中框直接取字形边界；中文侧 8 个混排词实测旧算法偏 2.2–21.7 px（关键词行最明显），新算法 0 px |
 | 控制台 `NetworkError: importScripts ... blob:null/...`，渲染变慢 | `file://` 的 origin 是 `null`，pdf.js 判 `workerSrc` 跨源后又包一层 CDN wrapper，在 blob worker 里必然失败，随后静默退回主线程渲染 | 不走 `workerSrc`，直接 `new PDFWorker({port: new Worker(blobUrl)})`；另存 `workerSrc` 作兜底。用 `window.__pdfMode` 可确认走的是 `worker` 还是 `main` |
 | 编译 0 错误但 PDF 无中文 | `newtxtext`/`txfonts` 等 Type1 包触发 METAFONT 回退，中文静默消失 | `inject_cjk` 会自动检测并换成 OpenType（TeX Gyre Termes + unicode-math）；若仍失败换 Fandol |
 | 同样是 0 错误 0 缺字，但汉字全丢 | 文档类经 `XCharter.fontspec` 设了 `\defaultfontfeatures{Extension=.otf}`，`SimSun` 被解析成 `SimSun.otf` → nullfont | 注入块在 `xeCJK` 之后加 `\defaultfontfeatures{}`，清空继承特性（已自动） |
