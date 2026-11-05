@@ -3,8 +3,8 @@ name: arxiv-zh-tex
 display_name: arXiv 论文中译
 display_name_en: arXiv Paper Chinese Translator
 description: 把论文翻成中文并尽量保持原排版。有 LaTeX 源码（arXiv 链接/ID、.tex 目录、压缩包）时走源码重排，公式、图表、引用、参考文献原位不动；只有 PDF（期刊版、扫描件、arXiv 未给源码）时自动切到 PDF 分支（pdf2zh），逐块覆盖文字层、保留版式与公式。两种分支都能再产出「左原文 / 右译文」的双栏对照 HTML。
-description_zh: 把 arXiv 论文翻成中文且尽量不动原排版：有 LaTeX 源码走源码重排，只有 PDF 走版式保留翻译，另出左原文右译文对照页。
-description_en: Translate arXiv papers into Chinese while keeping the original layout, via LaTeX source rebuild or layout-preserving PDF translation, plus a side-by-side reader.
+description_zh: 把 arXiv 论文翻成中文且尽量不动原排版：有 LaTeX 源码走源码重排，公式、图表、引用原位保留；只有 PDF 走版式保留翻译；另出可搜索的双栏对照页。需本机装 XeLaTeX。
+description_en: Translate arXiv papers into Chinese while keeping the original layout, via LaTeX source rebuild or layout-preserving PDF translation, plus a searchable side-by-side reader. Requires a local XeLaTeX install.
 examples_zh:
   - "把 arXiv 2509.09674 翻成中文，公式和排版别动"
   - "这篇 IEEE 双栏论文只有 PDF，帮我出个中文版"
