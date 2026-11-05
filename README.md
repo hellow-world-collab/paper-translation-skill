@@ -39,7 +39,7 @@
 ## 译出来是什么样
 
 <p align="center">
-  <img src="docs/images/showcase-page.png" width="620" alt="中文译文首页：标题、摘要、图 1 与图注">
+  <img src="docs/images/showcase-page.png" width="600" alt="中文译文首页：标题、摘要、图 1 与图注">
 </p>
 
 <p align="center">
