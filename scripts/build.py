@@ -20,10 +20,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _common import (die, find_bin, load_json, meta_dir, ok, pdf_pages,
-                     pdf_text, read_text, run, save_json, warn, write_text)
+                     pdf_text, read_text, run, save_json, warn, write_text,
+                     xetex_flags)
 
 OVERFULL = re.compile(r"^Overfull \\hbox \(([\d.]+)pt too wide\) in paragraph at lines (\d+)", re.M)
 UNDEFINED_CMD = re.compile(r"^! Undefined control sequence\.", re.M)
+# biblatex 的 .bbl 由 biber 生成；对它跑 bibtex 只会失败并留下空文献表
+BIBLATEX_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*biblatex\b|\\addbibresource\b")
+
+
+def pick_bib_tool(work: Path, main: str) -> str | None:
+    """判断该跑 bibtex 还是 biber（都没有就返回 None）。"""
+    if not any(work.rglob("*.bib")):
+        return None
+    text = ""
+    for i, p in enumerate(work.rglob("*.tex")):
+        if i >= 40:
+            break
+        try:
+            text += read_text(p)
+        except OSError:
+            continue
+    if BIBLATEX_RE.search(text):
+        return "biber" if find_bin("biber", required=False) else None
+    return "bibtex" if find_bin("bibtex", required=False) else None
 
 
 def classify(log: str) -> dict:
@@ -137,24 +157,43 @@ def main():
             ok(f"缩小 {n} 个宽表格")
 
     binary = find_bin(engine)
+    flags = xetex_flags(work)
+    if "-shell-escape" in flags:
+        warn("文档用到 minted / pythontex / svg，已自动加 -shell-escape；"
+             "它会让文档里的 \\write18 真的执行，请确认源码可信")
+    bib_tool = pick_bib_tool(work, main_file)
+    if bib_tool:
+        print(f"  参考文献工具：{bib_tool}")
+
     print(f"\n[{root.name}] 编译（{engine}）")
-    for i in range(args.rounds):
-        rc, out = run([binary, "-interaction=nonstopmode", "-file-line-error", main_file],
-                      cwd=work, timeout=1200)
+    counter = {"n": 0}
+
+    def compile_pass():
+        counter["n"] += 1
+        rc, out = run([binary, *flags, main_file], cwd=work, timeout=1200)
         log = read_text(log_path) if log_path.is_file() else out
         info = classify(log)
-        print(f"  pass{i + 1}: 退出码 {rc}  错误 {info['errors']}  溢出 {len(info['overfull'])}")
+        print(f"  pass{counter['n']}: 退出码 {rc}  错误 {info['errors']}  溢出 {len(info['overfull'])}")
+        return info, log
 
-        if i == 0:
-            installed = install_missing(log)
-            if installed:
-                continue
-        if i == 0 and info["errors"] == 0:
-            # 首轮就干净，仍需跑 bibtex
-            if list(work.rglob("*.bib")):
-                bibtex = find_bin("bibtex", required=False)
-                if bibtex:
-                    run([bibtex, Path(main_file).stem], cwd=work, timeout=300)
+    info, log = compile_pass()
+    installed = install_missing(log)
+    if installed:
+        info, log = compile_pass()
+
+    # 参考文献必须在正文第一遍之后跑：bibtex/biber 要读 .aux/.bcf 才知道引用了什么。
+    # 以前只在「首轮零错误」时跑 bibtex，基线稍有告警就整段文献表丢失。
+    if bib_tool:
+        rc_b, out_b = run([find_bin(bib_tool), Path(main_file).stem], cwd=work, timeout=600)
+        if rc_b == 0:
+            ok(f"{bib_tool} 完成")
+        else:
+            tail = [l for l in out_b.strip().splitlines() if l.strip()][-2:]
+            warn(f"{bib_tool} 失败：{' / '.join(tail)[:200]}")
+        info, log = compile_pass()
+
+    for _ in range(max(1, args.rounds - 1)):
+        info, log = compile_pass()
 
     log = read_text(log_path) if log_path.is_file() else out
     info = classify(log)

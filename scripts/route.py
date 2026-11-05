@@ -135,7 +135,7 @@ def main() -> int:
             print("    下一步：python fetch.py <输入> --out <项目> && python preflight.py <项目>")
         elif info["mode"] == "pdf":
             print("    下一步：python pdf_mode.py <输入> --project <项目> --compare")
-            print("    依赖：pdf-formula-translate 技能 + Python 3.10–3.12 + pdf2zh==1.9.11")
+            print("    依赖：Python 3.10–3.12 + pdf2zh==1.9.11（与 pdf-formula-translate 同源，直接调用）")
             print("    首次先跑 pdf_mode.py ... --install（会建 .venv-pdf 并钉好 tmt 版本）")
         if info.get("blocked"):
             warn("这条分支当前不可执行，见上面的理由。")

@@ -171,8 +171,60 @@ def read_arxiv_readme(src: Path) -> str:
     return ""
 
 
+def _walk_toplevel(obj) -> str | None:
+    if isinstance(obj, dict):
+        usage = str(obj.get("usage", "")).lower()
+        fn = obj.get("filename") or obj.get("file") or obj.get("name")
+        if (usage in ("toplevel", "toplevel-file", "main")
+                and isinstance(fn, str) and fn.lower().endswith((".tex", ".ltx"))):
+            return fn
+        for v in obj.values():
+            hit = _walk_toplevel(v)
+            if hit:
+                return hit
+    elif isinstance(obj, list):
+        for v in obj:
+            hit = _walk_toplevel(v)
+            if hit:
+                return hit
+    return None
+
+
+def readme_toplevel(src: Path) -> str | None:
+    """从 00README.json / 00README 里读出「哪个才是主文件」。
+
+    arXiv 现在推荐用 00README.json 标注：
+        {"sources": [{"filename": "main.tex", "usage": "toplevel"}, ...]}
+    老式文本格式写 `toplevelfile main.tex`。之前只认 "main" 这个键名，遇到
+    usage=toplevel 会掉进「体量最大的 tex」兜底——正文按 \\input 拆开时，
+    就会把某一章当成主文件去编译，产物只有几页。
+    """
+    for name in ("00README.json", "00README.yaml", "00README"):
+        p = src / name
+        if not p.is_file():
+            continue
+        text = read_text(p)
+        if name.endswith(".json"):
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = None
+            if data is not None:
+                hit = _walk_toplevel(data)
+                if hit and (src / hit).is_file():
+                    return hit
+        m = re.search(r"toplevelfile\s+[`\"']?([^\s`\"']+\.(?:tex|ltx))", text)
+        if m and (src / m.group(1)).is_file():
+            return m.group(1)
+    return None
+
+
 def pick_main(src: Path, tex_files: list[str]) -> tuple[str, str]:
     """识别主文件，返回 (相对路径, 判定依据)。"""
+    top = readme_toplevel(src)
+    if top:
+        return top, "00README 指定 usage=toplevel"
+
     readme = read_arxiv_readme(src)
 
     # arXiv 新格式会在 00README.json 里写主文件

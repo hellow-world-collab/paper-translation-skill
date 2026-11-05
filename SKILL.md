@@ -1,6 +1,6 @@
 ---
 name: arxiv-zh-tex
-description: 把论文翻成中文并尽量保持原排版。有 LaTeX 源码（arXiv 链接/ID、.tex 目录、压缩包）时走源码重排，公式、图表、引用、参考文献原位不动；只有 PDF（期刊版、扫描件、arXiv 未给源码）时自动切到 pdf-formula-translate 分支，逐块覆盖文字层、保留版式与公式。两种分支都能再产出「左原文 / 右译文」的双栏对照 HTML。
+description: 把论文翻成中文并尽量保持原排版。有 LaTeX 源码（arXiv 链接/ID、.tex 目录、压缩包）时走源码重排，公式、图表、引用、参考文献原位不动；只有 PDF（期刊版、扫描件、arXiv 未给源码）时自动切到 PDF 分支（pdf2zh），逐块覆盖文字层、保留版式与公式。两种分支都能再产出「左原文 / 右译文」的双栏对照 HTML。
 agent_created: true
 ---
 
@@ -30,6 +30,23 @@ python $S/route.py <arXiv ID / 链接 / PDF / .tex 目录 / 压缩包>   # 只�
 **模型永远不生成 TeX 语法。** 源码被切成若干自然语言片段，公式、命令、引用、数值被替换成 `⟪P0001⟫` 这样的标记交给模型；回填时只替换片段内的文字，标记还原成原文。这样公式和结构从根本上不可能被改坏。
 
 产出是**纯中文版**（不是中英对照）。图表内不可编辑的英文一律不译。
+
+### 抽取覆盖哪些写法
+
+| 位置 | 译？ | 说明 |
+|---|---|---|
+| 正文、章节标题 | ✅ | `\section{Introduction}` 这种单词标题也收 |
+| 图表题注、子图题注 | ✅ | 单词题注（`Simulation.`）也收 |
+| 表格单元格 | ✅ | 按单元格切开，`Ours` / `Walk` 也收 |
+| `\item[术语]` | ✅ | description 列表的条目名，之前整条丢 |
+| beamer 帧标题 / block 标题 | ✅ | `\begin{frame}{标题}` |
+| 算法标题 | ✅ | 只挖 `\caption`，伪代码一个字不动 |
+| 公式、图内文字、伪代码、`\verb` | ❌ | 整体保护 |
+| 参考文献条目 | ❌ | `.bbl` / `thebibliography` 不动 |
+
+判定看「语境 + 词数」：正文要至少两个英文词；题注 / 单元格 / 术语只要一个
+（首字母大写或全小写、≥3 个字母），全大写缩写（PPO / GPU）仍然跳过。
+语境随命令参数递归下传、随环境切换（`tabular` → `cell`），实现在 `extract.Token.ctx`。
 
 ## LaTeX 分支（有源码）
 
@@ -97,8 +114,10 @@ PY
 
 ## PDF 分支（只有 PDF）
 
-期刊 PDF、扫描件、arXiv 没给源码的论文走这条。底层是 `pdf-formula-translate` 技能
-（PDFMathTranslate / pdf2zh）：解析文本块 → 逐块翻译 → 用译文覆盖原文字层，图片与公式区域保持原坐标。
+期刊 PDF、扫描件、arXiv 没给源码的论文走这条。底层是 PDFMathTranslate（`pdf2zh`）：
+解析文本块 → 逐块翻译 → 用译文覆盖原文字层，图片与公式区域保持原坐标。
+仓库自带 `scripts/pdf_translate.py` 直接调它，**不依赖 pdf-formula-translate 技能**；
+那个技能只在本文件的翻译器缺失时才作为退路。
 
 ```bash
 python $S/pdf_mode.py 论文.pdf --project ./论文 --compare          # 最常用
@@ -246,6 +265,16 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | HTML：目录条目夹带整段正文 | 抽取器把 `\section{X}` 和紧随的第一段并成一个段落 | `render_html` 按标记把正文拆回独立段落，不丢内容 |
 | HTML：公式整条显示成红色 | KaTeX 不认 `\label`、`\nonumber` | `_math()` 先清洗这些命令再交给 KaTeX |
 | HTML：子图题注漏成正文、主图题注取错 | 一个浮动体内有多个段落/多个 `\caption` | 区间内段落全部消费；题注取**最后一个** `\caption` |
+| 表头、子图题注、`\item[术语]` 明明是正文却没译 | 抽取要求「至少两个英文词」，`Walk`、`Simulation.`、`Ours` 全被当杂项丢掉 | `extract` 按语境放宽：caption / cell / item / heading 一个词也收（`Token.ctx`） |
+| beamer 帧标题不译 | `\begin{frame}{标题}` 的标题被当环境参数整体保护 | `TITLE_ENVS` 把 frame/block/alertblock/exampleblock 的必选参数当正文 |
+| 算法标题仍是 `Algorithm 1: Training procedure` | `algorithm` 整个环境在不译集合里 | `carve_caption()` 只把 `\caption` 的参数挖出来，其余原样保护 |
+| biblatex 论文参考文献整段消失、正文里是 `[smith2020]` | 只跑 bibtex，而 biblatex 的 `.bbl` 必须 biber 生成；且旧逻辑只在「首轮零错误」时才跑 | `pick_bib_tool()` 认 biblatex → 跑 biber；bib 步骤改到首轮编译之后**无条件**执行 |
+| TeX Live 下 minted 报 `You must invoke LaTeX with the -shell-escape flag` | MiKTeX 默认允许 write18，本机察觉不到，换机器就炸 | `_common.xetex_flags()` 扫到 minted/pythontex/svg 才加 `-shell-escape`（只对可信源码） |
+| `Listing 1:` 还是英文 | minted 浮动体用的是 `\listingscaption`，既不是 `\lstlistingname` 也不是 `\listingname` | 注入块三个名字都 renew |
+| IEEEtran 的 `Abstract—`、`Index Terms—` 不译 | 它们读 `\abstractname`、`\IEEEkeywordsname` | 注入块补 abstractname / IEEEkeywordsname / bibname / appendixname / proofname / algorithmcfname 等（都带 `\ifdefined` 兜底） |
+| 字体包写在 `\input{preamble}` 里时，A1 方案报上千条错 | 只扫主文件的 `\usepackage`，没发现 newtxmath，照样加 unicode-math | `detect_type1_tree()` 扫全部 tex/sty/cls；`strip_in_tree()` 连被 include 的文件一起摘 |
+| arXiv 包里 `00README.json` 写了主文件却不认 | 只匹配 `"main"` 这个键名，不认 arXiv 的 `usage: toplevel` | `readme_toplevel()` 解析 `sources[]`，取 `usage=toplevel` 的 filename |
+| PDF 分支报「找不到 pdf-formula-translate 技能」 | 旧版把外部技能目录当硬依赖，clone 仓库的人一定踩 | 仓库自带 `scripts/pdf_translate.py`，优先用它；外部技能只作退路 |
 
 ### 分批翻译别用 offset
 
@@ -290,10 +319,27 @@ PY
 
 `--png` 会把首页和可疑页导成图，供视觉核验排版（是否重影、表格是否溢出、图注是否被裁）。
 
+## 环境自检
+
+改过脚本、或换到新机器，先跑一遍再干活：
+
+```bash
+python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py          # 取源码 + 挑字体 + 抽取
+python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full   # 再灌假译文 → 编译 → 查 PDF
+```
+
+12 个最小工程各针对一类易翻车写法：标准类 + `\input`、IEEEtran、revtex4-2、elsarticle、
+llncs、acmart、beamer、minted、natbib+bibtex、biblatex+biber、preamble 里的 Type1、
+`00README.json` 指定主文件。全绿说明主文件识别、字体注入、抽取规则、参考文献后端都还正常；
+某项红了直接看它打印的「漏抽」或最后一段日志。产物默认留在临时目录，`--out` 可指定位置。
+
 ## 边界
 
-- 没有源码的论文不再直接失败：`route.py` 会判成 PDF 分支，交给 `pdf_mode.py`（pdf-formula-translate）。
+- 没有源码的论文不再直接失败：`route.py` 会判成 PDF 分支，交给 `pdf_mode.py`（pdf2zh）。
   但 PDF 分支要求有文字层；扫描件需要先 OCR。
-- 不翻参考文献条目（`thebibliography` 环境整体跳过），不翻图内文字。
+- 不翻参考文献条目（`thebibliography` 与 `.bbl` 整体跳过）、不翻图内文字（含 `tikz`/`pgfplots`
+  节点的文字）、不翻伪代码（`algorithm` / `algorithmic` 体，仅标题译）。
 - 不自动改作者的重音宏、自定义类、参考文献格式——这些改动风险高于收益，遇到就报给用户。
+- 中文字体里没有的符号（①②、特殊箭头、emoji）会 `Missing character` 留白；`inject_cjk` 会打印条数，
+  真在意就换字体栈或改源码。
 - 目标语言固定中文（简体）。要做其它语言需改 `glossary.tsv` 与字体栈。

@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _common import (die, find_bin, load_json, meta_dir, ok, pdf_pages,
-                     read_text, run, save_json, warn)
+                     read_text, run, save_json, warn, xetex_flags)
 
 MISSING_FILE = re.compile(
     r"(?:File|file)\s+[`'\"]([^`'\"]+?\.(?:sty|cls|def|fd|clo|cfg|bbx|cbx))['\"]\s+not found"
@@ -78,13 +78,13 @@ def compile_once(work: Path, main: str, engine: str, rounds: int = 3,
                  auto_install: bool = True) -> dict:
     """跑一轮完整编译（engine → bibtex → engine ×2）。返回统计。"""
     binary = find_bin(engine)
+    flags = xetex_flags(work) if engine == "xelatex" else ["-interaction=nonstopmode", "-file-line-error"]
     log_name = f"{Path(main).stem}.log"
     installed: list[str] = []
     first_log = ""
 
     for attempt in range(14):
-        rc, out = run([binary, "-interaction=nonstopmode", "-file-line-error", main],
-                      cwd=work, timeout=900)
+        rc, out = run([binary, *flags, main], cwd=work, timeout=900)
         log_path = work / log_name
         log = read_text(log_path) if log_path.is_file() else out
         if attempt == 0:
@@ -117,8 +117,7 @@ def compile_once(work: Path, main: str, engine: str, rounds: int = 3,
                 warn(f"bibtex 失败：{out_b.strip().splitlines()[-1][:140] if out_b.strip() else ''}")
 
     for _ in range(rounds - 1):
-        run([binary, "-interaction=nonstopmode", "-file-line-error", main],
-            cwd=work, timeout=900)
+        run([binary, *flags, main], cwd=work, timeout=900)
 
     log_path = work / log_name
     log = read_text(log_path) if log_path.is_file() else out

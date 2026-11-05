@@ -176,10 +176,44 @@ def pdf_text(pdf: Path, first: int | None = None, last: int | None = None) -> st
     return out if rc == 0 else ""
 
 
+# 需要 -shell-escape 才能编译的宏包（minted 调 python 做高亮、pythontex 同理、svg 调 inkscape）
+_SHELL_RE = re.compile(
+    r"\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*(?:minted|pythontex|svg)\b"
+    r"|\\inputminted\b|\\write18\b|\\tikzexternalize\b"
+)
+
+
+def needs_shell_escape(root: Path, limit: int = 60) -> bool:
+    r"""扫描源码，判断是否必须加 -shell-escape。
+
+    minted 在 TeX Live 下不带这个参数会直接报
+    「You must invoke LaTeX with the -shell-escape flag」；MiKTeX 默认允许 write18，
+    所以同一个文档在本机可能毫无问题、换台机器就编译失败。
+    开启后文档里的 \write18 会被真实执行，只对可信源码使用。
+    """
+    root = Path(root)
+    for i, f in enumerate(root.rglob("*.tex")):
+        if i >= limit:
+            break
+        try:
+            if _SHELL_RE.search(read_text(f)):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def xetex_flags(root: Path) -> list[str]:
+    """所有 xelatex 调用共用的参数。"""
+    flags = ["-interaction=nonstopmode", "-file-line-error"]
+    if needs_shell_escape(root):
+        flags.append("-shell-escape")
+    return flags
+
+
 def die(msg: str, code: int = 1):
     print(msg, file=sys.stderr)
     raise SystemExit(code)
-
 
 def ok(msg: str):
     print(f"  [ok] {msg}")

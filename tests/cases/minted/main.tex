@@ -1,0 +1,20 @@
+\documentclass{article}
+\usepackage{minted}
+\usepackage{xcolor}
+\title{Code Listings in Papers}
+\author{Test Author}
+\begin{document}
+\maketitle
+\section{Introduction}
+We present a training loop that is easy to reproduce~\cite{smith2020}.
+\begin{listing}[ht]
+\begin{minted}[fontsize=\small]{python}
+for step in range(1000):
+    loss = criterion(policy(obs), action)
+    loss.backward()
+\end{minted}
+\caption{Training loop.}
+\end{listing}
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}

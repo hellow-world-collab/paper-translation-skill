@@ -1,0 +1,7 @@
+{
+  "sources": [
+    {"filename": "main.tex", "usage": "toplevel"},
+    {"filename": "sections/body.tex", "usage": "include"},
+    {"filename": "decoy.tex", "usage": "ignore"}
+  ]
+}

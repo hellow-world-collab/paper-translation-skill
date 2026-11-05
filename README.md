@@ -45,15 +45,19 @@ scripts/
   audit.py               产物审计（页数、中文覆盖率、图表数量、参考文献）
   render_html.py         段落级重排网页（旧版，可选）
   render_compare.py      页面对照页（左原文图 / 右译文图）
-  pdf_mode.py            PDF 分支：建 .venv-pdf、跑 pdf2zh、接对照页
+  pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
+  pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
   pending.py             待译片段清单
-  _common.py            路径、原子写、JSON 读写
+  _common.py            路径、原子写、JSON 读写、编译参数
 assets/
   compare_template.html  对照页模板
   katex/                 KaTeX（离线渲染公式用）
 rules/
   packages.yaml          宏包级 / 源码级坑与自动修法
   papers/                单篇论文的特殊处理记录
+tests/
+  run_compat.py          兼容性自检：12 个最小工程跑通全流程
+  cases/                 每个 case 一个易翻车的写法
 ```
 
 ## 依赖
@@ -63,6 +67,8 @@ rules/
 - **PDF 分支**：Python **3.10–3.12**（`pdf2zh` 的元数据写了 `<3.13`）+ `pymupdf`。
   首次跑 `pdf_mode.py ... --install` 会自动建 `.venv-pdf` 并装好钉死版本：
   `pdf2zh==1.9.11`、`tencentcloud-sdk-python-tmt==3.0.1478`。
+  翻译器是仓库自带的 `scripts/pdf_translate.py`，**不需要**另外安装
+  `pdf-formula-translate` 技能（装了也只是备选）。
 - 核心链路（fetch → preflight → inject → apply → build → audit）**只用标准库**，
   第三方依赖只有渲染两个 HTML 时才需要 `pymupdf`。
 
@@ -83,6 +89,9 @@ python $S/apply.py      ./2508.08241
 python $S/check_tr.py   ./2508.08241
 python $S/build.py      ./2508.08241
 python $S/audit.py      ./2508.08241 --png
+
+# 对照页要用「原文 PDF」，fetch 只下源码，这一步得自己抓一次
+curl -L -o ./2508.08241/.arz/original_arxiv.pdf https://arxiv.org/pdf/2508.08241
 python $S/render_compare.py --root ./2508.08241 \
     --original .arz/original_arxiv.pdf --translated out/main.pdf \
     --out html/compare --single-file "论文_双栏对照.html"
@@ -92,6 +101,38 @@ python $S/pdf_mode.py 论文.pdf --project ./论文 --compare
 python $S/pdf_mode.py https://arxiv.org/pdf/2509.09674 --project ./x --compare
 python $S/pdf_mode.py 论文.pdf --project ./x --check      # 只体检，不翻译
 ```
+
+装完想确认环境没坏，跑一次自检（会真实编译 12 个小工程，约 5–10 分钟）：
+
+```bash
+python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
+```
+
+## LaTeX 兼容性
+
+`tests/cases/` 是 12 个最小工程，每个只针对一类容易出问题的写法。
+下表是最近一次全量结果（Windows 11 / MiKTeX 25.12 / XeLaTeX，逐个真实编译验证）：
+
+| 场景 | 样本 | 结果 | 说明 |
+|---|---|---|---|
+| 标准文档类 + `\input` 拆章节 | `article-input` | ✅ 0 错误 | 被 include 的文件一并抽取、一并回填 |
+| 双栏 IEEE | `ieeetran` | ✅ 0 错误 | `Abstract`→摘要、`Index Terms`→关键词 |
+| APS 期刊 | `revtex` | ✅ 0 错误 | revtex4-2 双栏 + 交叉引用 |
+| Elsevier | `elsarticle` | ✅ 0 错误 | frontmatter / keyword 正常 |
+| Springer LNCS | `llncs` | ✅ 0 错误 | |
+| ACM | `acmart` | ✅ 0 错误 | 首次编译要装依赖，约 2 分钟 |
+| 幻灯片 | `beamer` | ✅ 0 错误 | 帧标题、block 标题也会译 |
+| 代码清单 | `minted` | ✅ 0 错误 | 自动加 `-shell-escape`，前缀变「代码 1:」 |
+| natbib + bibtex | `article-input` | ✅ 0 错误 | 文献表正常生成 |
+| biblatex + biber | `biblatex` | ✅ 0 错误 | 自动选 `biber`，不再错跑 bibtex |
+| 字体包藏在 `\input{preamble}` | `preamble-type1` | ✅ 0 错误 | 会连被 include 的文件一起摘掉 Type1 |
+| `00README.json` 指定主文件 | `readme-toplevel` | ✅ 0 错误 | 认 `usage: toplevel`，不被体量更大的诱饵骗走 |
+
+**会翻的**：正文、章节标题、图表题注（含子图）、表格单元格、`\item` 术语、脚注、
+摘要、关键词、beamer 帧标题、算法标题、作者与单位、页眉。
+
+**不翻的**：公式、图内文字（`tikz`/`pgfplots` 整体跳过）、伪代码、`\verb`、
+参考文献条目，以及 `\label` / `\cite` / `\ref` / `\includegraphics` 等命令参数。
 
 ## 对照页
 
@@ -106,23 +147,33 @@ python $S/pdf_mode.py 论文.pdf --project ./x --check      # 只体检，不翻
   双栏两边都搜，切视图命中自动重算。
 - 目录跳转、页码输入、`[`/`]` 翻页、`L` 联动、`F`/`0` 复位、`⇄` 交换左右
 
-## 已验证
+## 已验证的真实论文
 
 | 论文 | 分支 | 结果 |
 |---|---|---|
-| 2509.09674 *SimpleVLA-RL* | LaTeX | 24 页原文 → 21 页中文，5 图 / 7 表 / 1 代码框全部在位 |
+| 2509.09674 *SimpleVLA-RL* | LaTeX | 24 页原文 → 21 页中文，5 图 / 7 表 / 1 代码框全部在位；题注前缀全文无英文残留 |
 | 2509.09674 | PDF（pdf2zh） | 版式、图、公式原位，正文全中文 |
-| 2508.08241 *BeyondMimic* | LaTeX | 双栏 + 大量 tikz，字体与题注本地化通过 |
+| 2508.08241 *BeyondMimic* | LaTeX | Science 模板（`sciencemag.bst` + 11 张图）：字体注入复跑 A1 / 0 错误 / 59 页；项目里另有早前产出的 54 页中文版 |
 
 ## 已知限制
 
 - **扫描件**：没有文字层，PDF 分支抽不出块 → 先 OCR。
-- **图内文字**：烧进位图的英文不译（要译得重画图）。
+- **图内文字**：烧进位图的英文不译（要译得重画图）；`tikz`/`pgfplots` 整块跳过，
+  图里的 `\node {Text}` 也是英文。
+- **伪代码**：`algorithm` / `algorithmic` 环境整体不译，只有标题（`\caption`）会翻。
+- **参考文献条目**：`thebibliography` 与 `.bbl` 都不动，条目保持原文。
 - **页数不一致**：正常现象，看的是同一节，不是同一页。
+- **表格会变宽**：中文表头通常比英文窄，但短词替换成长词时会溢出；`build.py --fit-tables`
+  会给 7 列以上的表加 `\small`，跨栏表仍需人工。
+- **个别符号缺字**：中文字体里没有的字符（①②、特殊箭头、emoji）会触发
+  `Missing character`，PDF 里是空白。编译日志会报条数，`inject_cjk` 也会提示。
+- **模板把标题写死在类文件里**：`\renewcommand` 压不住，只能加规则到
+  `inject_cjk.CLASS_LOCALIZE`（已覆盖 thuc3i / babel / caption 那几种常见写法）。
 - **PDF 分支字体**：`pdf2zh` 默认去 HF 拉 Noto CJK，国内会失败；脚本自动改指本机中文字体
   并把 `HF_ENDPOINT` 指到镜像。
 - **Type1 字体包**：`newtxtext`/`txfonts` 等在 XeLaTeX 下会让中文**静默消失**
-  （0 错误、页数正常、一个字都没有）。`inject_cjk.py` 会自动换成 OpenType 等价物。
+  （0 错误、页数正常、一个字都没有）。`inject_cjk.py` 会自动换成 OpenType 等价物，
+  包括被 `\input` 进来的 preamble 里的那些。
 
 ## 许可证
 

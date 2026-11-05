@@ -1,0 +1,24 @@
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Madrid}
+\title{Sim-to-Real Transfer for Legged Locomotion}
+\author{Chris Wang}
+\institute{ETH Zurich}
+\date{2026}
+\begin{document}
+\begin{frame}
+  \titlepage
+\end{frame}
+\begin{frame}{Motivation}
+  Policies trained in simulation often fail on hardware because of modelling error.
+  \begin{itemize}
+    \item Actuator delays are ignored in most simulators.
+    \item Contact friction is hard to identify.
+  \end{itemize}
+\end{frame}
+\begin{frame}{Method}
+  We randomise dynamics parameters during training~\cite{lee2021}.
+  \begin{block}{Key idea}
+    Domain randomisation acts as a form of data augmentation.
+  \end{block}
+\end{frame}
+\end{document}

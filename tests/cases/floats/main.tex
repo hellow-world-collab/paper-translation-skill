@@ -1,0 +1,49 @@
+\documentclass[twocolumn]{article}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[ruled,linesnumbered]{algorithm2e}
+\usepackage{subcaption}
+\usepackage{graphicx}
+\title{Tables, Algorithms and Subfigures}
+\author{Test Author}
+\begin{document}
+\maketitle
+\section{Introduction}
+We compare several baselines~\cite{smith2020}.
+\begin{table}[t]
+\centering
+\caption{Success rates on three tasks.}
+\begin{tabular}{lccc}
+\toprule
+Method & Walk & Run & Jump \\
+\midrule
+Ours & 98.1 & 95.4 & 91.2 \\
+Baseline & 92.3 & 88.0 & 80.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{algorithm}[t]
+\caption{Training procedure}
+\KwIn{Learning rate $\alpha$, episodes $N$}
+\KwOut{Policy $\pi_\theta$}
+\For{$i \leftarrow 1$ \KwTo $N$}{
+  Collect rollouts and update $\theta$ by gradient ascent\;
+}
+\Return $\pi_\theta$\;
+\end{algorithm}
+\begin{figure}[t]
+\centering
+\begin{subfigure}{0.45\linewidth}\centering
+\rule{2cm}{1cm}
+\caption{Simulation.}
+\end{subfigure}
+\begin{subfigure}{0.45\linewidth}\centering
+\rule{2cm}{1cm}
+\caption{Hardware.}
+\end{subfigure}
+\caption{Qualitative comparison of the learned gait.}
+\end{figure}
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}

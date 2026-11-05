@@ -82,6 +82,19 @@ MIXED_ARGS = {
 
 TEX_SOURCE_SUFFIX = {".tex", ".ltx", ".sty", ".cls"}
 
+# 表格环境：内部按单元格处理（一个词也要译，否则表头永远英文）
+TABLE_ENVS = {
+    "tabular", "tabular*", "tabularx", "tabulary", "longtable", "longtable*",
+    "supertabular", "xtabular", "xltabular", "tblr",
+}
+# 第一个必选参数是标题的环境
+TITLE_ENVS = {"frame", "block", "alertblock", "exampleblock"}
+# 可选参数是定理名的环境（\begin{theorem}[Convergence]）
+THEOREM_ENVS = {
+    "theorem", "lemma", "corollary", "proposition", "definition", "remark",
+    "example", "assumption", "claim", "proof", "conjecture",
+}
+
 
 @dataclass
 class Token:
@@ -89,6 +102,11 @@ class Token:
     start: int
     end: int
     value: str
+    # 所在语境：body / caption / cell / item / heading。
+    # 语境决定「几个词才算值得翻译」——表格单元格、图注、\item[术语] 常常只有一个词
+    # （Walk / Simulation. / Ours），按正文的「至少两个词」规则会被整条丢掉，
+    # 结果正文全中文、表头和子图标题还是英文。
+    ctx: str = "body"
 
 
 @dataclass
@@ -179,19 +197,59 @@ def read_math(s: str, i: int) -> int:
     return n
 
 
-def tokenize(s: str, start: int = 0, end: int | None = None) -> list[Token]:
+CAPTION_RE = re.compile(r"\\caption\s*(?:\[[^\]]*\])?\s*\{")
+
+
+def carve_caption(s: str, start: int, stop: int) -> list[Token]:
+    """把不译环境（algorithm）里的 \\caption{...} 参数挖成可译片段。
+
+    其余部分整体保护，回填时按标记原样还原，所以伪代码一个字都不会变。
+    algorithm2e 的标题就是正文里的「Algorithm 1: Training procedure」，
+    不译的话整篇中文里会突兀地留一行英文。
+    """
+    spans = []
+    for m in CAPTION_RE.finditer(s, start, stop):
+        gs = m.end() - 1
+        ge = read_group(s, gs)
+        if ge > stop:
+            break
+        inner = tokenize(s, gs + 1, ge - 1, ctx="caption")
+        if any(t.kind == "text" and t.value.strip() for t in inner):
+            spans.append((gs, ge, inner))
+
+    toks: list[Token] = []
+    cursor = start
+    for gs, ge, inner in spans:
+        if gs > cursor:
+            toks.append(Token("protect", cursor, gs, s[cursor:gs], "body"))
+        toks.append(Token("protect", gs, gs + 1, s[gs:gs + 1], "body"))
+        toks.extend(inner)
+        toks.append(Token("protect", ge - 1, ge, s[ge - 1:ge], "body"))
+        cursor = ge
+    if cursor < stop:
+        toks.append(Token("protect", cursor, stop, s[cursor:stop], "body"))
+    return toks
+
+
+def tokenize(s: str, start: int = 0, end: int | None = None,
+             ctx: str = "body") -> list[Token]:
     """把源码切成 text / protect / break 三种 token。
 
     start/end 支持对命令参数做子区间递归，这样 \\caption{\\textbf{X} $y$} 里的
-    \\textbf 与公式仍会被正确保护。
+    \\textbf 与公式仍会被正确保护。ctx 随参数递归下传、并随环境切换
+    （tabular → cell），决定这段文字要按「正文」还是「短标签」的规则判定。
     """
     out: list[Token] = []
-    n = len(s) if end is None else end
+    n = len(s) if end is None else min(end, len(s))
     i = start
+    stack = [ctx]
+
+    def cur() -> str:
+        return stack[-1]
 
     def push(kind: str, a: int, b: int):
         if b > a:
-            out.append(Token(kind, a, b, s[a:b]))
+            out.append(Token(kind, a, b, s[a:b], cur()))
 
     while i < n:
         c = s[i]
@@ -255,26 +313,66 @@ def tokenize(s: str, start: int = 0, end: int | None = None) -> list[Token]:
                 if k < n and s[k] == "{":
                     e = read_group(s, k)
                     env = s[k + 1: e - 1].strip()
+
                     if name == "begin" and env in OPAQUE_ENVS | MATH_ENVS:
                         stop = find_env_end(s, e, env)
                         if stop > 0:
-                            push("protect", i, stop)
+                            # 算法块整体不译，但标题要译：把 \caption 的参数挖出来，
+                            # 否则正文全中文、只有「Algorithm 1: Training procedure」是英文。
+                            if env == "algorithm":
+                                out.extend(carve_caption(s, i, stop))
+                            else:
+                                push("protect", i, stop)
                             i = stop
                             continue
+
                     # 环境定界符后的可选参数（[ht]、[t]）与必选参数（列格式）
                     # 都属于结构，不能进入正文，否则 {lccc} 会被当成散文翻译
                     k2 = e
                     while k2 < n and s[k2] in " \t":
                         k2 += 1
+                    opts: list[tuple[int, int]] = []
                     while k2 < n and s[k2] == "[":
-                        k2 = read_bracket(s, k2)
+                        be = read_bracket(s, k2)
+                        opts.append((k2, be))
+                        k2 = be
                         while k2 < n and s[k2] in " \t":
                             k2 += 1
+                    args: list[tuple[int, int]] = []
                     while k2 < n and s[k2] == "{":
-                        k2 = read_group(s, k2)
+                        ge = read_group(s, k2)
+                        args.append((k2, ge))
+                        k2 = ge
                         while k2 < n and s[k2] in " \t":
                             k2 += 1
-                    push("break", i, k2)
+
+                    if name == "end":
+                        if env in TABLE_ENVS and len(stack) > 1:
+                            stack.pop()
+                        push("break", i, k2)
+                        i = k2
+                        continue
+
+                    # beamer 的 \begin{frame}{标题}、\begin{block}{标题}，
+                    # 以及 \begin{theorem}[名字]：这些是纸面上的字，必须译
+                    title_span = None
+                    if env in TITLE_ENVS and args:
+                        title_span = args[0]
+                    elif env in THEOREM_ENVS and opts:
+                        title_span = opts[0]
+
+                    if title_span:
+                        ts, te = title_span
+                        push("break", i, ts)
+                        push("protect", ts, ts + 1)
+                        out.extend(tokenize(s, ts + 1, te - 1, ctx="heading"))
+                        push("protect", te - 1, te)
+                        push("break", te, k2)
+                    else:
+                        push("break", i, k2)
+
+                    if env in TABLE_ENVS:
+                        stack.append("cell")
                     i = k2
                     continue
                 push("protect", i, j)
@@ -286,6 +384,16 @@ def tokenize(s: str, start: int = 0, end: int | None = None) -> list[Token]:
                 k = j
                 while k < n and s[k] in " \t":
                     k += 1
+                # \item[术语] 的可选参数是正文（description 列表的条目名），
+                # 之前当成结构整体跳过，结果条目名永远英文、解释却是中文。
+                if name == "item" and k < n and s[k] == "[":
+                    e = read_bracket(s, k)
+                    push("break", i, k)
+                    push("protect", k, k + 1)
+                    out.extend(tokenize(s, k + 1, e - 1, ctx="item"))
+                    push("protect", e - 1, e)
+                    i = e
+                    continue
                 if k < n and s[k] == "[":
                     k = read_bracket(s, k)
                 push("break", i, k)
@@ -324,6 +432,13 @@ def tokenize(s: str, start: int = 0, end: int | None = None) -> list[Token]:
                     push("protect", i, args_start)
                     local_start = args_start
                 opaque_idx = MIXED_ARGS.get(name, set())
+                # 题注 / 标题里的文字按短标签处理（一个词也译）
+                sub_ctx = ctx
+                if name in ("caption", "subcaption", "captionof"):
+                    sub_ctx = "caption"
+                elif name in ("section", "subsection", "subsubsection", "paragraph",
+                              "subparagraph", "part", "chapter", "title"):
+                    sub_ctx = "heading"
                 cursor = local_start
                 for idx, (gs, ge) in enumerate(groups):
                     if idx in opaque_idx:
@@ -331,7 +446,7 @@ def tokenize(s: str, start: int = 0, end: int | None = None) -> list[Token]:
                     else:
                         # 左括号保护，内容递归扫描，右括号保护
                         push("protect", cursor, gs + 1)
-                        out.extend(tokenize(s, gs + 1, ge - 1))
+                        out.extend(tokenize(s, gs + 1, ge - 1, ctx=sub_ctx))
                         push("protect", ge - 1, ge)
                     cursor = ge
                 i = k
@@ -370,7 +485,7 @@ def merge_text(tokens: list[Token]) -> list[Token]:
     for t in tokens:
         if merged and t.kind == "text" and merged[-1].kind == "text":
             prev = merged[-1]
-            merged[-1] = Token("text", prev.start, t.end, prev.value + t.value)
+            merged[-1] = Token("text", prev.start, t.end, prev.value + t.value, prev.ctx)
         else:
             merged.append(t)
     return merged
@@ -383,15 +498,30 @@ def _has_words(s: str) -> bool:
     return bool(re.search(r"[A-Za-z\u4e00-\u9fff]{2,}", s))
 
 
-def looks_like_prose(text: str) -> bool:
-    """判断一段文本是否值得翻译：至少两个英文词，或含明显中文。"""
+def looks_like_prose(text: str, min_words: int = 2) -> bool:
+    r"""判断一段文本是否值得翻译。
+
+    正文要求「至少两个英文词」，避免把符号、编号、缩写送去翻译；但题注、表格单元格、
+    \item 术语常常只有一个词（Ours / Walk / Simulation.），这些位置 min_words 传 1，
+    单个人名化的普通单词（首字母大写或全小写、至少 3 个字母）也算可译，
+    全大写缩写（PPO / GPU）仍然跳过。
+    """
     stripped = re.sub(r"\s+", " ", text).strip()
     if len(stripped) < 2:
         return False
     if re.fullmatch(r"[\s\d\W]*", stripped):
         return False
     words = re.findall(r"[A-Za-z]{2,}", stripped)
-    return len(words) >= 2 or len(re.findall(r"[\u4e00-\u9fff]", stripped)) >= 2
+    if len(re.findall(r"[\u4e00-\u9fff]", stripped)) >= 2:
+        return True
+    if min_words >= 2:
+        return len(words) >= 2
+    if len(words) >= 2:
+        return True
+    if len(words) == 1:
+        w = words[0]
+        return len(w) >= 3 and not w.isupper()
+    return False
 
 
 def group_segments(tokens: list[Token], text: str, rel: str,
@@ -413,9 +543,14 @@ def group_segments(tokens: list[Token], text: str, rel: str,
             return
 
         source = text[buf[0].start: buf[-1].end]
-        # 章节标题常只有一个词（Introduction / Preliminaries），按散文规则会被误删
+        # 章节标题常只有一个词（Introduction / Preliminaries），表格单元格、图注、
+        # \item[术语] 也一样，这些位置放宽到「一个词也算」。
+        # 语境取第一个真正的文字 token：segment 往往以保护标记开头（{\caption 的
+        # 左括号、\item 的 '['），那是 body 语境，会把「一个词也译」的规则吃掉。
+        ctx = next((t.ctx for t in buf if t.kind == "text" and t.value.strip()), "body")
         heading = bool(HEADING_RE.match(source)) and _has_words(source)
-        if not looks_like_prose(source) and not heading:
+        min_words = 1 if (heading or ctx in ("heading", "caption", "cell", "item")) else 2
+        if not looks_like_prose(source, min_words):
             buf = []
             return
 
@@ -445,7 +580,7 @@ def group_segments(tokens: list[Token], text: str, rel: str,
 
         # 全部是标记、没有实际词的段落没有翻译价值
         core = MARKER_RE.sub("", masked)
-        if not looks_like_prose(core) and not (heading and _has_words(core)):
+        if not looks_like_prose(core, min_words):
             buf = []
             return
 

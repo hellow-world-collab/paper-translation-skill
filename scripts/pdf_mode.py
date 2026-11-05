@@ -47,6 +47,7 @@ MINOR_OK = {(3, 10), (3, 11), (3, 12)}
 # 定位
 # --------------------------------------------------------------------------- #
 def find_pdf_skill() -> Path | None:
+    """外部技能目录（可选）。内置翻译器不在时才用得上。"""
     cands = []
     env = os.environ.get("PDF_FORMULA_TRANSLATE_HOME")
     if env:
@@ -58,6 +59,21 @@ def find_pdf_skill() -> Path | None:
         if (c / "scripts" / "translate_pdf.py").is_file():
             return c
     return None
+
+
+def find_translator() -> tuple[Path | None, str]:
+    """返回 (翻译脚本, 来源说明)。内置优先，外部技能只是退路。
+
+    仓库里带了 `pdf_translate.py`，clone 下来就能用；之前只能靠本机装了
+    pdf-formula-translate 技能才跑得通，别人拿到仓库会直接卡在「找不到技能」。
+    """
+    local = Path(__file__).resolve().parent / "pdf_translate.py"
+    if local.is_file():
+        return local, "内置 pdf_translate.py"
+    skill = find_pdf_skill()
+    if skill:
+        return skill / "scripts" / "translate_pdf.py", f"外部技能 {skill.name}"
+    return None, ""
 
 
 def venv_python() -> Path:
@@ -235,12 +251,12 @@ def main() -> int:
     project = Path(args.project).expanduser().resolve()
     project.mkdir(parents=True, exist_ok=True)
 
-    # ---- 1. 技能 ----
-    skill = find_pdf_skill()
-    if not skill:
-        die(f"找不到 {SKILL_NAME} 技能。装一下：搜索并安装「公式版式保留PDF中英互译」，"
-            f"或设置 PDF_FORMULA_TRANSLATE_HOME 指向它。")
-    ok(f"PDF 技能：{skill}")
+    # ---- 1. 翻译器 ----
+    script, where = find_translator()
+    if not script:
+        die("找不到可用的 PDF 翻译器：仓库里的 scripts/pdf_translate.py 丢了，"
+            f"也没装 {SKILL_NAME} 技能。")
+    ok(f"翻译器：{where}")
 
     # ---- 2. 安装（可选） ----
     if args.install:
@@ -271,7 +287,7 @@ def main() -> int:
     if args.check:
         print(f"    字体：{os.environ.get('NOTO_FONT_PATH') or '未找到本机中文字体（会去 HF 下载）'}")
         print(f"    HF 镜像：{os.environ.get('HF_ENDPOINT')}")
-        ok("体检通过：技能、解释器、pdf2zh 都在。")
+        ok("体检通过：翻译器、解释器、pdf2zh 都在。")
         return 0
 
     # ---- 4. 输入 ----
@@ -297,7 +313,7 @@ def main() -> int:
     out_dir.mkdir(exist_ok=True)
     # 必须喂项目目录里的副本：pdf2zh 会把「位于系统临时目录的输入 PDF」读完就删掉
     # （translate() 里的 "Cleaned temp file" 分支），直接传 /tmp 下的路径会被吃掉。
-    cmd = [str(py), str(skill / "scripts" / "translate_pdf.py"), str(original),
+    cmd = [str(py), str(script), str(original),
            "-o", str(out_dir), "-li", args.lang_in, "-lo", args.lang_out,
            "-s", args.service, "-t", str(args.thread), "--skip-install"]
     if args.pages:
@@ -334,7 +350,7 @@ def main() -> int:
     # ---- 7. 元数据 ----
     save_json(meta_dir(project) / "pdf_mode.json", {
         "mode": "pdf",
-        "skill": str(skill),
+        "translator": str(script),
         "python": str(py),
         "engine": PINNED,
         "service": args.service,

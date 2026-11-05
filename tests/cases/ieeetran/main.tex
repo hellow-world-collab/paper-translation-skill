@@ -1,0 +1,25 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath}
+\usepackage{cite}
+\title{A Compact Controller for Quadruped Robots}
+\author{\IEEEauthorblockN{Alice Zhang}\IEEEauthorblockA{Tsinghua University\\Beijing, China\\alice@example.com}
+\and \IEEEauthorblockN{Bob Li}\IEEEauthorblockA{Peking University\\Beijing, China\\bob@example.com}}
+\begin{document}
+\maketitle
+\begin{abstract}
+This paper presents a compact controller that tracks velocity commands on rough terrain.
+\end{abstract}
+\begin{IEEEkeywords}
+legged robots, control, reinforcement learning
+\end{IEEEkeywords}
+\section{Introduction}
+Quadruped robots have become affordable~\cite{smith2020}. Tracking commands at speed
+remains difficult because contact dynamics are hybrid.
+\section{Method}
+We parameterise the policy as a neural network and train it with PPO.
+\begin{equation}
+  \mathcal{L} = \mathbb{E}\left[\log \pi_\theta(a \mid s) A(s,a)\right]
+\end{equation}
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+\end{document}

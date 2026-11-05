@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _common import (cjk_ratio, die, find_bin, load_json, meta_dir, ok,
                      pdf_pages, pdf_text, read_text, run, save_json, warn,
-                     write_text)
+                     write_text, xetex_flags)
 
 PROBE = "中文探针检测ABC"
 
@@ -89,7 +89,44 @@ def detect_type1(text: str) -> list[str]:
     return sorted(set(found))
 
 
-def build_injection(text: str, recipe: dict) -> tuple[str, list[str], list[str]]:
+def detect_type1_tree(root: Path) -> list[str]:
+    r"""扫描整个项目（不只主文件）的 \usepackage，找出 Type1 字体包。
+
+    很多投稿把字体设置放在 \input{preamble} 或 cls 里，只扫主文件会漏掉；
+    漏掉的后果是 A1 方案照样加 unicode-math，跟 preamble 里的 newtxmath 硬碰硬，
+    一次编译报上千条错误（实测 1380 条），最后退回 A2 才勉强通过。
+    """
+    found: set[str] = set()
+    for f in list(root.rglob("*.tex")) + list(root.rglob("*.sty")) + list(root.rglob("*.cls")):
+        try:
+            found |= set(detect_type1(read_text(f)))
+        except OSError:
+            continue
+    return sorted(found)
+
+
+def strip_in_tree(work: Path, main_path: Path, names: set[str]) -> list[str]:
+    r"""把 Type1 宏包从「被 \input 的其它文件」里也摘掉，返回被改的文件名。"""
+    touched: list[str] = []
+    if not names:
+        return touched
+    main_res = main_path.resolve()
+    for f in work.rglob("*.tex"):
+        if f.resolve() == main_res:
+            continue
+        try:
+            text = read_text(f)
+        except OSError:
+            continue
+        new, gone = strip_packages(text, names)
+        if gone:
+            write_text(f, new)
+            touched.append(f"{f.name}（{', '.join(sorted(set(gone)))}）")
+    return touched
+
+
+def build_injection(text: str, recipe: dict,
+                    found_type1: list[str] | None = None) -> tuple[str, list[str], list[str]]:
     """返回 (注入块, 摘掉的包, 提示)。"""
     removed: list[str] = []
     lines: list[str] = []
@@ -97,6 +134,8 @@ def build_injection(text: str, recipe: dict) -> tuple[str, list[str], list[str]]
 
     if recipe["latin"] == "termes":
         body, gone = strip_packages(text, TYPE1_PACKAGES)
+        # 主文件里没有、但被 \input 的文件里有，同样要按「会加载 Type1」处理
+        gone = sorted(set(gone) | set(found_type1 or []))
         if gone:
             removed += gone
             lines.append("\\usepackage{fontspec}")
@@ -135,6 +174,19 @@ def build_injection(text: str, recipe: dict) -> tuple[str, list[str], list[str]]
     lines.append("\\AtBeginDocument{")
     lines.append("  \\renewcommand{\\contentsname}{目录}")
     lines.append("  \\renewcommand{\\refname}{参考文献}")
+    # 摘要标题：article 系列与 IEEEtran 都读 \abstractname，只有它不译会出现
+    # 「Abstract— 中文摘要」这种半中半英
+    lines.append("  \\ifdefined\\abstractname\\renewcommand{\\abstractname}{摘要}\\fi")
+    lines.append("  \\ifdefined\\bibname\\renewcommand{\\bibname}{参考文献}\\fi")
+    lines.append("  \\ifdefined\\appendixname\\renewcommand{\\appendixname}{附录}\\fi")
+    lines.append("  \\ifdefined\\partname\\renewcommand{\\partname}{部分}\\fi")
+    lines.append("  \\ifdefined\\chaptername\\renewcommand{\\chaptername}{章}\\fi")
+    lines.append("  \\ifdefined\\proofname\\renewcommand{\\proofname}{证明}\\fi")
+    lines.append("  \\ifdefined\\indexname\\renewcommand{\\indexname}{索引}\\fi")
+    lines.append("  \\ifdefined\\listfigurename\\renewcommand{\\listfigurename}{插图目录}\\fi")
+    lines.append("  \\ifdefined\\listtablename\\renewcommand{\\listtablename}{表格目录}\\fi")
+    lines.append("  \\ifdefined\\keywordsname\\renewcommand{\\keywordsname}{关键词}\\fi")
+    lines.append("  \\ifdefined\\IEEEkeywordsname\\renewcommand{\\IEEEkeywordsname}{关键词}\\fi")
     # 图/表题注前缀。有的模板把 figurename 写死在 \captionsetup 里（thuc3i.cls 的
     # figurename=Figure），babel 又只给英文，不处理就会出现「Figure 1 | 中文题注」。
     lines.append("  \\renewcommand{\\figurename}{图}")
@@ -142,6 +194,13 @@ def build_injection(text: str, recipe: dict) -> tuple[str, list[str], list[str]]
     lines.append("  \\ifdefined\\lstlistingname\\renewcommand{\\lstlistingname}{代码}\\fi")
     # caption 宏包的 \DeclareCaptionType{listing}[Listing][...] 定义的是 \listingname
     lines.append("  \\ifdefined\\listingname\\renewcommand{\\listingname}{代码}\\fi")
+    # minted 的 listing 浮动体走的是 \listingscaption（\floatname{listing}{\listingscaption}），
+    # 跟 listings 宏包的 \lstlistingname 不是一个宏，漏了就是「Listing 1: 中文题注」
+    lines.append("  \\ifdefined\\listingscaption\\renewcommand{\\listingscaption}{代码}\\fi")
+    # algorithm2e 的 \algorithmcfname 在宏包内部由 \SetAlgorithmName 设定，
+    # 直接 renew 命令即可；algorithm 宏包用 \algorithmname
+    lines.append("  \\ifdefined\\algorithmcfname\\renewcommand{\\algorithmcfname}{算法}\\fi")
+    lines.append("  \\ifdefined\\algorithmname\\renewcommand{\\algorithmname}{算法}\\fi")
     lines.append("  \\ifdefined\\captionsetup\\captionsetup{figurename=图,tablename=表}\\fi")
     lines.append("}")
 
@@ -178,7 +237,7 @@ CLASS_LOCALIZE = [
 def localize_class_files(root: Path) -> list[str]:
     """把 cls/sty 中硬编码的 Abstract 标题换成中文，返回改过的文件。"""
     touched = []
-    for f in list(root.glob("*.cls")) + list(root.glob("*.sty")):
+    for f in list(root.rglob("*.cls")) + list(root.rglob("*.sty")):
         text = read_text(f)
         new = text
         for pat, rep in CLASS_LOCALIZE:
@@ -189,8 +248,9 @@ def localize_class_files(root: Path) -> list[str]:
     return touched
 
 
-def apply_injection(text: str, recipe: dict, probe: bool) -> tuple[str, list[str], list[str]]:
-    block, removed, notes = build_injection(text, recipe)
+def apply_injection(text: str, recipe: dict, probe: bool,
+                    found_type1: list[str] | None = None) -> tuple[str, list[str], list[str]]:
+    block, removed, notes = build_injection(text, recipe, found_type1)
     if removed:
         text, _ = strip_packages(text, set(removed))
 
@@ -212,7 +272,8 @@ def apply_injection(text: str, recipe: dict, probe: bool) -> tuple[str, list[str
     return text, removed, notes
 
 
-def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool) -> dict:
+def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
+               tree_type1: list[str] | None = None) -> dict:
     """在一份临时副本里注入并编译，用哨兵文本判断中文是否真的输出。"""
     work = root / (".probe-" + rid)
     if work.exists():
@@ -221,14 +282,19 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool) -> dict:
 
     main_path = work / main
     original = read_text(main_path)
-    injected, removed, notes = apply_injection(original, RECIPES[rid], probe=True)
+    injected, removed, notes = apply_injection(
+        original, RECIPES[rid], probe=True, found_type1=tree_type1
+    )
     write_text(main_path, injected)
+    touched = strip_in_tree(work, main_path, set(removed))
+    if touched:
+        notes.append("被 \\input 的文件里也摘掉了字体包：" + "、".join(touched))
 
     binary = find_bin("xelatex")
+    flags = xetex_flags(work)
     log = ""
     for _ in range(2):
-        _, log = run([binary, "-interaction=nonstopmode", "-file-line-error", main],
-                     cwd=work, timeout=900)
+        _, log = run([binary, *flags, main], cwd=work, timeout=900)
 
     errors = len(re.findall(r"^!", log, flags=re.M))
     pdf = work / (Path(main).stem + ".pdf")
@@ -270,12 +336,15 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool) -> dict:
         if zh.exists():
             shutil.rmtree(zh)
         shutil.copytree(src, zh)
-        clean, _, _ = apply_injection(read_text(zh / main), RECIPES[rid], probe=False)
+        clean, removed_zh, _ = apply_injection(
+            read_text(zh / main), RECIPES[rid], probe=False, found_type1=tree_type1
+        )
         write_text(zh / main, clean)
+        strip_in_tree(zh, zh / main, set(removed_zh))
         for name in localize_class_files(zh):
             ok(f"类文件固定标题已本地化：{name}")
         for _ in range(2):
-            run([binary, "-interaction=nonstopmode", main], cwd=zh, timeout=900)
+            run([binary, *xetex_flags(zh), main], cwd=zh, timeout=900)
         result["zh_ready"] = True
 
     shutil.rmtree(work, ignore_errors=True)
@@ -307,6 +376,10 @@ def main():
     main_text = read_text(src / main_file)
 
     type1 = detect_type1(main_text)
+    tree_type1 = detect_type1_tree(src)
+    if tree_type1 and tree_type1 != type1:
+        print(f"\n被 \\input 的文件里还有 Type1 字体包：{', '.join(tree_type1)}")
+        print("  这些也会让中文静默消失，一并按 OpenType 替换处理。")
     order = AUTO_ORDER if args.recipe == "auto" else [args.recipe]
     if args.recipe == "auto" and type1:
         print(f"\n检测到 Type1 字体包：{', '.join(type1)}")
@@ -318,7 +391,7 @@ def main():
     print(f"\n[{root.name}] 依次尝试字体方案（每个方案实际编译验证）\n")
     for rid in order:
         print(f"  → {rid}", end="", flush=True)
-        res = try_recipe(root, src, main_file, rid, keep=False)
+        res = try_recipe(root, src, main_file, rid, keep=False, tree_type1=tree_type1)
         trials.append(res)
         status = "中文已进 PDF" if res["probe_ok"] else f"中文丢失（{res['cjk_chars']} 字）"
         print(f"  {res['errors']} 错误 / {res['pages']} 页 / {status}")
@@ -337,7 +410,7 @@ def main():
         )
 
     print(f"\n  采用 {chosen['recipe']}：{chosen['label']}")
-    final = try_recipe(root, src, main_file, chosen["recipe"], keep=True)
+    final = try_recipe(root, src, main_file, chosen["recipe"], keep=True, tree_type1=tree_type1)
 
     data = {
         "project": str(root),
