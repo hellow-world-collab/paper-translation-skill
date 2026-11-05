@@ -17,6 +17,10 @@ agent_created: true
 
 ## 第零步：先分流——有源码走源码，没源码走 PDF
 
+> **技能目录**：下文统一用 `~/.workbuddy/skills/arxiv-zh-tex`，这是本地 `git clone` 的默认位置。
+> 从技能市场安装时目录名可能不同（例如带 skill id），先 `ls ~/.workbuddy/skills` 确认实际目录，
+> 把它替换掉下文路径即可。不要因为路径不存在就判定技能没装好。
+
 ```bash
 S=~/.workbuddy/skills/arxiv-zh-tex/scripts
 python $S/route.py <arXiv ID / 链接 / PDF / .tex 目录 / 压缩包>   # 只判断，打印下一步命令
