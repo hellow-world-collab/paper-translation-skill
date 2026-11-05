@@ -2,7 +2,7 @@
 """render_compare.py — 生成「左原文 / 右译文」页面级双栏对照 HTML。
 
 与 render_html.py 的区别：那一个是段落级重排（KaTeX 公式、图文重组）；
-本脚本不做任何排版改动，直接把两份 PDF 逐页渲成图，左右并排，
+本脚本不做任何排版改动，两份 PDF 原样并排，
 按章节书签建立页号锚点，实现联动滚动 / 各自滚动。
 
 用法：
@@ -12,26 +12,22 @@
         --out html/compare
 
 产物：
-    <out>/index.html          目录版（图片在 <out>/pages/，首屏快）
-    <out>/pages/*.webp        默认 WebP；没有 Pillow 时回退 .jpg
+    <out>/index.html          目录版（PDF 数据在 <out>/pdf-en.js、pdf-zh.js）
+    <out>/pdf-*.js            base64 后的 PDF，按需 <script> 载入
 可选：
-    --single-file <路径>      另存单文件版（图片内联为 data URI）
+    --single-file <路径>      另存单文件版（PDF 数据一并内联）
 
-关于清晰度（v1.0.2）：
-    页面是位图，浏览器打开 PDF 是矢量渲染，位图永远比不过，只能把差距压到看不见。
-    两个变量：源图分辨率、压缩质量。
-    - 单栏视图最宽 900 CSS px（模板 fitWidth 的上限），高分屏 dpr=2 需要 1800 物理像素，
-      所以源图宽度必须 ≥1800 px。A4 宽 612 pt → scale 3.0 才够（旧默认 1.7 只有 1041 px，
-      被浏览器放大 1.7 倍，这是「HTML 比 PDF 糊」的真正原因）。
-    - JPEG q78 会在笔画边缘产生振铃，细笔画汉字尤其明显；WebP q88 同等体积下干净得多。
-      实测 42 页：1.7×JPEG78=6.1 MB，3.0×WebP88=9.5 MB —— 分辨率翻倍只多 56%。
-      对照组：2.6×JPEG q90 4:4:4 要 17.6 MB，纯亏，故不采用。
+渲染架构（v1.0.2）：
+    页面不是预先烘好的图片，而是把 PDF 交给浏览器里的 pdf.js 现渲。
+    canvas 的位图尺寸按「CSS 宽度 × devicePixelRatio」实时计算，缩放一次重绘一次，
+    所以任何缩放比下都是 1:1 物理像素——和浏览器内置 PDF 阅读器同一路线。
+    早期版本用 PyMuPDF 预渲染位图（1.7× ≈ 1041 px）再让 CSS 拉伸，
+    放大 1.73 倍就是糊的，这才是「HTML 不如 PDF 清楚」的根因；现方案已彻底换掉。
 """
 from __future__ import annotations
 
 import argparse
 import base64
-import io
 import json
 import os
 import re
@@ -43,16 +39,11 @@ try:
 except ImportError:  # pragma: no cover
     import fitz as pymupdf
 
-try:  # WebP 只能靠 Pillow 编，PyMuPDF 的 tobytes 只认 png/jpg/psd 一类
-    from PIL import Image
-
-    HAS_PIL = True
-except ImportError:  # pragma: no cover
-    HAS_PIL = False
-
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
 TEMPLATE = SKILL / "assets" / "compare_template.html"
+PDFJS = SKILL / "assets" / "pdf.min.js"
+PDFJS_WORKER = SKILL / "assets" / "pdf.worker.min.js"
 
 
 # ---------------------------------------------------------------- 工具
@@ -83,67 +74,32 @@ def clean_title(t: str) -> str:
     return t
 
 
-# ---------------------------------------------------------------- 渲染
+# ---------------------------------------------------------------- 交付
 
-_FALLBACK_WARNED = False
-
-
-def encode_page(pix, fmt: str, quality: int) -> tuple[bytes, str, str]:
-    """把 Pixmap 编成字节，返回 (数据, 扩展名, MIME)。
-
-    webp 走 Pillow（PyMuPDF 只支持 png/jpg/pnm/psd 等）；没装 Pillow 就退到
-    高质量 JPEG，并提示一次——不能静默降级，否则又变成「看起来能用但更糊」。
-    """
-    global _FALLBACK_WARNED
-    if fmt == "webp":
-        if not HAS_PIL:
-            if not _FALLBACK_WARNED:
-                print("    [!] 没装 Pillow，无法输出 WebP，本次回退 JPEG q95。"
-                      "\n        想要更清晰：python -m pip install pillow")
-                _FALLBACK_WARNED = True
-            return pix.tobytes("jpg", jpg_quality=95), "jpg", "image/jpeg"
-        im = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        buf = io.BytesIO()
-        im.save(buf, "WEBP", quality=quality, method=4)
-        return buf.getvalue(), "webp", "image/webp"
-    if fmt == "png":
-        return pix.tobytes("png"), "png", "image/png"
-    return pix.tobytes("jpg", jpg_quality=quality), "jpg", "image/jpeg"
+def page_dims(doc) -> list[dict]:
+    """每页的物理尺寸（pt）。前端据此设 aspect-ratio，图未渲染时也占好位、不跳动。"""
+    return [{"w": round(p.rect.width, 2), "h": round(p.rect.height, 2)} for p in doc]
 
 
-def render_pdf(doc, outdir: Path, prefix: str, scale: float, quality: int,
-               inline: bool, fmt: str = "webp") -> list[dict]:
-    pages: list[dict] = []
-    total = 0
-    mat = pymupdf.Matrix(scale, scale)
-    if not inline:
-        outdir.mkdir(parents=True, exist_ok=True)
-        # 上一次可能是别的格式，同名前缀的旧图留着会被误当成新产物
-        stale = re.compile(rf"^{re.escape(prefix)}-\d{{3}}\.(?:jpg|jpeg|png|webp)$", re.I)
-        for old in outdir.iterdir():
-            if old.is_file() and stale.match(old.name):
-                old.unlink()
-    for i, page in enumerate(doc):
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        raw, ext, mime = encode_page(pix, fmt, quality)
-        total += len(raw)
-        name = f"{prefix}-{i+1:03d}.{ext}"
-        if inline:
-            src = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
-        else:
-            (outdir / name).write_bytes(raw)
-            src = f"{outdir.name}/{name}"
-        pages.append({"src": src, "w": pix.width, "h": pix.height})
-    print(f"    {prefix}: {len(pages)} 页  {human(total)}  ({pix.width}x{pix.height})")
-    return pages
+def pdf_payload(path: Path) -> str:
+    return base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def write_pdf_js(outdir: Path, key: str, payload: str) -> str:
+    """把 base64 PDF 写成独立 js。用 <script> 载入而不是 fetch：
+    file:// 下 fetch 被 CORS 挡死，classic script 不受限制。"""
+    name = f"pdf-{key}.js"
+    body = f'window.__PDF=window.__PDF||{{}};window.__PDF["{key}"]="{payload}";'
+    (outdir / name).write_text(body, encoding="utf-8")
+    return name
 
 
 def page_words(doc) -> list[list[list]]:
     """每页的文字行，行内带每个词的横向范围：[[y0, y1, [[x0, x1, 词], ...]], ...]。
 
     x 按页宽、y 按页高归一化（0~1），前端按百分比定位，缩放时不用重算。
-    页面是图片，正文选不中、也搜不到；把文字层存成小数组后，前端能像浏览器一样
-    逐词高亮，而不是只能画一整行横带。
+    canvas 上的正文选不中（要选中的话得再铺一层 textLayer），所以把文字层存成
+    小数组后，前端能像浏览器一样逐词高亮，而不是只能画一整行横带。
 
     用 rawdict 而不是 words：后者给的 (块号, 行号) 在这类 PDF 里会跨行重复，
     同一组里混进页面上下两端的词，算出来的行高能到半页；rawdict 的字符是
@@ -274,11 +230,20 @@ def build_anchors(a_doc, b_doc) -> tuple[list[list[float]], list[dict]]:
 
 # ---------------------------------------------------------------- 组装
 
-def fill(template: str, meta: dict, title: str, sub: str) -> str:
-    blob = json.dumps(meta, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
-    html = template.replace("__META__", blob)
-    html = html.replace("__TITLE__", title.replace("&", "&amp;").replace("<", "&lt;"))
+def fill(template: str, meta: dict, title: str, sub: str,
+         pdfjs_tag: str, worker_tag: str, data_tag: str) -> str:
+    """把数据塞进模板。
+
+    先替换小占位符、最后塞几 MB 的大块：反过来的话，pdf.js 源码里万一出现
+    "__META__" 之类字样，后续 replace 就会改错地方。
+    """
+    html = template.replace("__TITLE__", title.replace("&", "&amp;").replace("<", "&lt;"))
     html = html.replace("__SUB__", sub.replace("&", "&amp;").replace("<", "&lt;"))
+    blob = json.dumps(meta, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    html = html.replace("__META__", blob)
+    html = html.replace("__PDFJS__", pdfjs_tag)
+    html = html.replace("__PDFWORKER__", worker_tag)
+    html = html.replace("__PDFDATA__", data_tag)
     return html
 
 
@@ -288,30 +253,17 @@ def main() -> None:
     ap.add_argument("--original")
     ap.add_argument("--translated")
     ap.add_argument("--out", default="html/compare")
-    # 默认 3.0 是按「单栏视图最宽 900 CSS px × dpr 2 ≈ 1800 物理像素」反推的，
-    # 1.7 那版只有 1041 px，在缩放屏上会被放大 1.7 倍，肉眼就是糊的。
-    ap.add_argument("--scale", type=float, default=3.0)
-    ap.add_argument("--quality", type=int, default=92)
-    ap.add_argument("--format", choices=["webp", "jpg", "png"], default="webp")
     ap.add_argument("--title")
     ap.add_argument("--sub")
     ap.add_argument("--single-file")
-    # 单文件是全量内联，压在 q88 刚好 12 MB 上下；再高会顶到 20 MB 以上
-    ap.add_argument("--single-scale", type=float, default=3.0)
-    ap.add_argument("--single-quality", type=int, default=88)
+    # 1.0.2 起页面由 pdf.js 现渲，不再预生成位图；这几个参数留着只为不弄坏旧脚本
+    for legacy in ("--scale", "--quality", "--single-scale", "--single-quality", "--format"):
+        ap.add_argument(legacy, help=argparse.SUPPRESS)
     args = ap.parse_args()
-
-    # 没 Pillow 就只能走 JPEG：3.0x 的 JPEG 会把单文件顶到 25 MB 以上，
-    # 不如退回 2.4x（照样比旧版 1.7x 清楚），并明确告知怎么装。
-    if args.format == "webp" and not HAS_PIL:
-        print("[!] 未安装 Pillow：WebP 不可用。请 python -m pip install pillow\n"
-              "    本次自动改用 JPEG q90 @2.4x（体积可控，清晰度仍优于旧默认）", flush=True)
-        args.format = "jpg"
-        args.scale = min(args.scale, 2.4)
-        args.quality = max(args.quality, 90)
-        if args.single_file:
-            args.single_scale = min(args.single_scale, 2.4)
-            args.single_quality = max(args.single_quality, 90)
+    if any(getattr(args, k) is not None for k in
+           ("scale", "quality", "single_scale", "single_quality", "format")):
+        print("[i] --scale/--quality/--format 已废弃并被忽略：页面改为 pdf.js 现渲，"
+              "分辨率随缩放自适应", flush=True)
 
     root = Path(args.root).resolve()
     out = (root / args.out).resolve()
@@ -323,19 +275,10 @@ def main() -> None:
                  ["out/main.pdf", "SimpleVLA-RL_zh.pdf"], "译文 PDF")
 
     a_doc, b_doc = pymupdf.open(a_pdf), pymupdf.open(b_pdf)
-    print(f"[1/4] 原文 {a_pdf.name}  {len(a_doc)} 页")
+    print(f"[1/5] 原文 {a_pdf.name}  {len(a_doc)} 页")
     print(f"      译文 {b_pdf.name}  {len(b_doc)} 页")
 
-    print("[2/4] 渲染页面")
-    pages_dir = out / "pages"
-    print(f"      {args.format.upper()} q{args.quality} @ {args.scale}x"
-          f"（目标 ≥1800 px 宽，覆盖 dpr=2 的单栏视图）")
-    en_pages = render_pdf(a_doc, pages_dir, "en", args.scale, args.quality,
-                          inline=False, fmt=args.format)
-    zh_pages = render_pdf(b_doc, pages_dir, "zh", args.scale, args.quality,
-                          inline=False, fmt=args.format)
-
-    print("[3/4] 建立书签锚点")
+    print("[2/5] 建立书签锚点")
     anchors, rows = build_anchors(a_doc, b_doc)
 
     print("      抽取文字层（供全文搜索）")
@@ -343,6 +286,11 @@ def main() -> None:
     n_words = sum(len(r[2]) for pg in en_lines for r in pg) + \
               sum(len(r[2]) for pg in zh_lines for r in pg)
     print(f"      文字词 {n_words} 个")
+
+    print("[3/5] 打包 PDF（base64）")
+    payloads = {"en": pdf_payload(a_pdf), "zh": pdf_payload(b_pdf)}
+    for k, v in payloads.items():
+        print(f"      {k}: {human(len(v) * 3 / 4)} 原始 → {human(len(v))} base64")
 
     stem = b_pdf.stem.replace("_中文版", "")
     title = args.title or stem.replace("_", " · ")
@@ -354,27 +302,50 @@ def main() -> None:
         sub = "左原文 / 右译文"
 
     tpl = TEMPLATE.read_text(encoding="utf-8")
-    meta = {"en": {"pages": en_pages, "lines": en_lines},
-            "zh": {"pages": zh_pages, "lines": zh_lines},
+    pdfjs = PDFJS.read_text(encoding="utf-8")
+    worker = PDFJS_WORKER.read_text(encoding="utf-8")
+    for name, blob in (("pdf.min.js", pdfjs), ("pdf.worker.min.js", worker)):
+        if "</script" in blob.lower():
+            sys.exit(f"[x] {name} 里出现 </script，无法整段内联，请换构建或改成分文件引用")
+    # worker 必须以文本形式留在 DOM 里：file:// 下 new Worker('pdf.worker.min.js')
+    # 会被当跨源，只能自己拼 Blob URL，所以源码得先随页面带过去。
+    pdfjs_tag = f"<script>{pdfjs}</script>"
+    worker_tag = f'<script type="text/plain" id="pdfjs-worker">{worker}</script>'
+
+    print("[4/5] 渲染版面数据")
+    meta = {"en": {"pages": page_dims(a_doc), "lines": en_lines},
+            "zh": {"pages": page_dims(b_doc), "lines": zh_lines},
             "anchors": anchors, "toc": rows}
 
+    # 上一次可能是位图版，pages/ 里的旧图留着既占地方又容易被误认
+    stale_dir = out / "pages"
+    if stale_dir.is_dir():
+        old = re.compile(r"^(?:en|zh)-\d{3}\.(?:jpg|jpeg|png|webp)$", re.I)
+        for f in stale_dir.iterdir():
+            if f.is_file() and old.match(f.name):
+                f.unlink()
+        if not any(stale_dir.iterdir()):
+            stale_dir.rmdir()
+
+    names = {k: write_pdf_js(out, k, v) for k, v in payloads.items()}
+    data_tag = "".join(f'<script src="{n}"></script>' for n in names.values())
     index = out / "index.html"
-    index.write_text(fill(tpl, meta, title, sub), encoding="utf-8")
-    print(f"[4/4] 写出 {index}  ({human(index.stat().st_size)})")
+    index.write_text(fill(tpl, meta, title, sub, pdfjs_tag, worker_tag, data_tag),
+                     encoding="utf-8")
+    print(f"[5/5] 写出 {index}  ({human(index.stat().st_size)})")
+    for n in names.values():
+        print(f"      {n}  ({human((out / n).stat().st_size)})")
 
     if args.single_file:
-        print(f"      生成单文件版…（{args.format.upper()} q{args.single_quality} @ {args.single_scale}x）")
-        en2 = render_pdf(a_doc, out, "en", args.single_scale, args.single_quality,
-                         inline=True, fmt=args.format)
-        zh2 = render_pdf(b_doc, out, "zh", args.single_scale, args.single_quality,
-                         inline=True, fmt=args.format)
-        meta2 = {"en": {"pages": en2, "lines": en_lines},
-                 "zh": {"pages": zh2, "lines": zh_lines},
-                 "anchors": anchors, "toc": rows}
+        print("      生成单文件版（PDF 与引擎全内联）…")
+        inline = "window.__PDF={" + ",".join(
+            f'"{k}":"{v}"' for k, v in payloads.items()) + "};"
+        single_tag = f"<script>{inline}</script>"
         single = Path(args.single_file)
         if not single.is_absolute():
             single = root / single
-        single.write_text(fill(tpl, meta2, title, sub), encoding="utf-8")
+        single.write_text(fill(tpl, meta, title, sub, pdfjs_tag, worker_tag, single_tag),
+                          encoding="utf-8")
         print(f"      写出 {single}  ({human(single.stat().st_size)})")
 
 

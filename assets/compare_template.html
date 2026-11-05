@@ -95,8 +95,11 @@ body[data-swap="1"] .pane[data-side="zh"]{order:0}
 .pg{width:var(--pw);margin:0 auto}
 .page{margin:0;background:#fff;position:relative;overflow:hidden;border-radius:1px;
       box-shadow:0 1px 1px rgba(16,24,40,.05),0 3px 9px rgba(16,24,40,.07),0 0 0 1px rgba(16,24,40,.04)}
-.page img{display:block;width:100%;height:100%;object-fit:contain;
+/* 页面由 pdf.js 现渲到 canvas：位图尺寸 = CSS 宽 × dpr，缩放后重绘，
+   所以任何比例都是 1:1 物理像素（旧版 <img> 是定死分辨率再拉伸，放大必糊） */
+.page canvas{display:block;width:100%;height:100%;background:#fff;
   user-select:none;-webkit-user-drag:none}
+.page canvas:not([width]){background:repeating-linear-gradient(45deg,#fbfbfc,#fbfbfc 8px,#f4f5f7 8px,#f4f5f7 16px)}
 .pgnum{text-align:center;font-size:10.5px;color:#a4acb6;padding:5px 0 0;letter-spacing:.6px;
        font-variant-numeric:tabular-nums;user-select:none}
 .pg+.pg{margin-top:10px}
@@ -231,6 +234,10 @@ body[data-swap="1"] .pane[data-side="zh"]{order:0}
   <div class="toclist" id="toclist"></div>
 </div>
 
+__PDFJS__
+__PDFWORKER__
+__PDFDATA__
+
 <script>
 const META = __META__;
 
@@ -261,6 +268,146 @@ function interp(map,x){
   return last[1];
 }
 
+/* ---------- PDF 渲染引擎 ----------
+   思路和浏览器内置阅读器一致：不存图，存 PDF，按「CSS 宽 × devicePixelRatio」
+   现算位图尺寸再画。缩放 >100% 时只是重画一张更大的，所以永远不会糊。
+   为了不把 43 页一次性画进内存，只渲染视口附近的页，离远了就把 canvas 释放掉。 */
+const DOC = {};                       // k -> PDFDocumentProxy
+const DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+const MAX_PIX = 12e6;                 // 单页位图上限，4x 缩放 + 高分屏时不至于爆内存
+const TASK = new Map();               // "k:i" -> 进行中的 RenderTask
+const DONE = new Map();               // "k:i" -> 已渲染位图的宽度
+const VIS  = {en:new Set(), zh:new Set()};
+let renderTimer = 0, engineErr = null;
+
+function pdfBytes(k){
+  const b64 = (window.__PDF || {})[k];
+  if(!b64) throw new Error('缺少 '+k+' 的 PDF 数据');
+  const raw = atob(b64);
+  const buf = new Uint8Array(raw.length);
+  /* 分块写，一次性 charCodeAt 循环在 4 MB 上会卡住主线程好几百毫秒 */
+  for(let i=0;i<raw.length;i+=65536){
+    const end = Math.min(i+65536, raw.length);
+    for(let j=i;j<end;j++) buf[j] = raw.charCodeAt(j);
+  }
+  return buf;
+}
+
+async function bootPdf(){
+  if(typeof pdfjsLib === 'undefined') throw new Error('pdf.js 没有加载起来');
+  const wk = document.getElementById('pdfjs-worker');
+  if(wk && !pdfjsLib.GlobalWorkerOptions.workerSrc){
+    /* file:// 下 new Worker('pdf.worker.min.js') 会被判跨源，只能自己拼 Blob */
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      URL.createObjectURL(new Blob([wk.textContent], {type:'text/javascript'}));
+  }
+  for(const k of ['en','zh']){
+    DOC[k] = await pdfjsLib.getDocument({data: pdfBytes(k)}).promise;
+  }
+}
+
+function showEngineError(err){
+  engineErr = err;
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:99;'
+    + 'max-width:min(680px,90vw);padding:12px 16px;border-radius:10px;font-size:13px;line-height:1.6;'
+    + 'background:#fff4f2;color:#8a2b18;border:1px solid #f0c8bd;box-shadow:0 6px 20px rgba(16,24,40,.12)';
+  bar.textContent = 'PDF 引擎没能启动（'+(err && err.message || err)+'）。'
+    + '页面文字靠 pdf.js 现渲，引擎没起来就只能是空白——请用 Chrome/Edge/Safari 14+ 打开，'
+    + '或直接看同目录的 PDF 原文。';
+  document.body.appendChild(bar);
+  console.error(err);
+}
+
+/* 页面容器当前的 CSS 宽度（已含缩放系数） */
+function figWidth(fig){ return Math.max(1, Math.round(fig.getBoundingClientRect().width)); }
+
+async function renderPage(k, i){
+  const doc = DOC[k];
+  if(!doc) return;
+  const s = S[k], pgEl = s.pages[i];
+  if(!pgEl) return;
+  const fig = pgEl.querySelector('.page');
+  const cv = fig && fig.querySelector('canvas');
+  if(!cv) return;
+
+  const cssW = figWidth(fig);
+  if(cssW < 8) return;                        /* 栏被隐藏时宽度为 0，别渲 */
+  const dim = s.meta.pages[i];
+  let scale = (cssW * DPR) / dim.w;
+  const pix = (dim.w*scale) * (dim.h*scale);
+  if(pix > MAX_PIX) scale *= Math.sqrt(MAX_PIX/pix);
+  const targetW = Math.round(dim.w*scale);
+  if(DONE.get(k+':'+i) === targetW) return;    /* 已经是目标分辨率，不重画 */
+
+  const prev = TASK.get(k+':'+i);
+  if(prev){ try{ prev.cancel(); }catch(e){} TASK.delete(k+':'+i); }
+
+  try{
+    const page = await doc.getPage(i+1);
+    if(Math.abs(figWidth(fig) - cssW) > 2) return;   /* 期间又缩放了，交给下一轮 */
+    const vp = page.getViewport({scale});
+    cv.width  = Math.round(vp.width);
+    cv.height = Math.round(vp.height);
+    const task = page.render({canvasContext: cv.getContext('2d', {alpha:false}), viewport: vp});
+    TASK.set(k+':'+i, task);
+    await task.promise;
+    TASK.delete(k+':'+i);
+    DONE.set(k+':'+i, targetW);
+  }catch(e){
+    if(e && e.name === 'RenderingCancelledException') return;
+    console.warn('渲染失败', k, i, e);
+  }
+}
+
+/* 视口外的页释放位图，避免 43 页 × 8 MB 把内存吃穿 */
+function releaseFar(k){
+  const s = S[k], vis = VIS[k];
+  if(!vis.size) return;
+  /* 放大后一屏只看得到一两页，但每页位图大得多，保留窗口跟着缩小 */
+  const win = state.zoom >= 1.6 ? 2 : 6;
+  const lo = Math.min(...vis), hi = Math.max(...vis);
+  s.pages.forEach((p,i)=>{
+    if(i >= lo-win && i <= hi+win) return;
+    const cv = p.querySelector('canvas');
+    if(cv && cv.width){ cv.width = 0; cv.height = 0; DONE.delete(k+':'+i); }
+  });
+}
+
+function setupObserver(k){
+  const s = S[k];
+  if(s.io) s.io.disconnect();
+  s.io = new IntersectionObserver(es=>{
+    es.forEach(e=>{
+      const i = +e.target.dataset.page - 1;
+      if(e.isIntersecting){ VIS[k].add(i); renderPage(k, i); }
+      else VIS[k].delete(i);
+    });
+    releaseFar(k);
+  }, {root:s.scroll, rootMargin:'800px 0px', threshold:0});
+  s.pages.forEach(p=>s.io.observe(p));
+}
+
+/* 缩放 / 改窗口大小后统一重绘可见页；拖 wheel 时会连发，所以防抖 */
+function scheduleRender(delay){
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(()=>{
+    ['en','zh'].forEach(k=>{
+      if(!DOC[k]) return;
+      VIS[k].forEach(i=>renderPage(k, i));
+      releaseFar(k);
+      /* 还没进入视口但马上要露头的几页，顺手预热 */
+      const near = [...VIS[k]].sort((a,b)=>a-b);
+      if(near.length){
+        for(let d=1; d<=2; d++){
+          renderPage(k, near[0]-d);
+          renderPage(k, near[near.length-1]+d);
+        }
+      }
+    });
+  }, delay === undefined ? 130 : delay);
+}
+
 /* ---------- 构建页面 ---------- */
 function paneEls(k){
   const s=S[k];
@@ -282,10 +429,10 @@ function build(){
       const pg=document.createElement('div'); pg.className='pg'; pg.dataset.page=i+1;
       const fig=document.createElement('figure'); fig.className='page';
       fig.style.aspectRatio = p.w+' / '+p.h;
-      const img=new Image();
-      img.src=p.src; img.loading='lazy'; img.decoding='async'; img.draggable=false;
-      img.alt=(k==='en'?'原文':'译文')+' 第 '+(i+1)+' 页';
-      fig.appendChild(img);
+      const cv=document.createElement('canvas');
+      cv.setAttribute('role','img');
+      cv.setAttribute('aria-label',(k==='en'?'原文':'译文')+' 第 '+(i+1)+' 页');
+      fig.appendChild(cv);
       const num=document.createElement('div'); num.className='pgnum'; num.textContent=i+1;
       pg.appendChild(fig); pg.appendChild(num);
       frag.appendChild(pg);
@@ -297,6 +444,7 @@ function build(){
     s.pin.max=s.meta.pages.length;
   });
   layout();
+  ['en','zh'].forEach(setupObserver);   /* 位置定下来之后再挂观察器，rootMargin 才准 */
 }
 
 function measure(){
@@ -325,6 +473,7 @@ function layout(){
     if(sc) sc.classList.toggle('pannable', sc.scrollWidth > sc.clientWidth + 4);
   });
   if(FIND.hits && FIND.hits.length) buildMarks();   /* 缩放/换视图后刻度位置会变 */
+  scheduleRender();                                  /* 尺寸变了，可见页按新倍率重绘 */
 }
 
 /* 放大后可按住拖动平移（仅在出现横向溢出时启用） */
@@ -834,12 +983,6 @@ window.addEventListener('resize',()=>{
   });
 });
 
-/* 图片载入完成后重算一次尺寸 */
-function onceLoaded(){
-  if(S.en.pages.length) measure();
-}
-document.addEventListener('load',onceLoaded,true);
-
 build();
 buildIndex();
 if(META.toc && META.toc.length){
@@ -856,6 +999,9 @@ if(window.innerWidth < 860){
   document.documentElement.dataset.view='zh';
   requestAnimationFrame(()=>{layout();});
 }
+
+/* 版式先立起来（aspect-ratio 占好位，不跳动），再异步启引擎、画可见页 */
+bootPdf().then(()=>scheduleRender(0)).catch(showEngineError);
 </script>
 </body>
 </html>
