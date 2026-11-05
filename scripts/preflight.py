@@ -16,8 +16,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import (die, find_bin, load_json, meta_dir, ok, pdf_pages,
-                     read_text, run, save_json, warn, xetex_flags)
+from _common import (count_errors as _count_errors, die, error_lines, find_bin,
+                     load_json, meta_dir, ok, pdf_pages, read_text, run,
+                     save_json, warn, xetex_flags)
 
 MISSING_FILE = re.compile(
     r"(?:File|file)\s+[`'\"]([^`'\"]+?\.(?:sty|cls|def|fd|clo|cfg|bbx|cbx))['\"]\s+not found"
@@ -34,20 +35,12 @@ XETEX_INCOMPATIBLE = {
 
 
 def count_errors(log: str) -> int:
-    """统计真实错误数。行首的单行 '!' 才算，避免把内容里的感叹号算进去。"""
-    return len(re.findall(r"^!", log, flags=re.M))
+    """两种格式都要算：传统 "! xxx" 与 -file-line-error 的 "f.tex:12: xxx"。"""
+    return _count_errors(log)
 
 
 def error_samples(log: str, limit: int = 6) -> list[str]:
-    samples = []
-    lines = log.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("!"):
-            ctx = " / ".join(x.strip() for x in lines[i:i + 3] if x.strip())
-            samples.append(ctx[:220])
-            if len(samples) >= limit:
-                break
-    return samples
+    return [s[:220] for s in error_lines(log)[:limit]]
 
 
 def missing_packages(log: str) -> list[str]:

@@ -101,6 +101,24 @@ def main():
     for seg in segs:
         by_file.setdefault(seg["file"], []).append(seg)
 
+    # 偏移量自检：segments.json 记录的是抽取那一刻 zh/ 里的字符位置。如果之后又跑过
+    # inject_cjk（注入块变长/变短），整段位置会平移，回填会把中文塞进英文单词中间。
+    stale = []
+    for rel, items in by_file.items():
+        path = work / rel
+        if not path.is_file():
+            continue
+        text = read_text(path)
+        for seg in items:
+            if text[seg["start"]:seg["end"]] != seg["source"]:
+                stale.append(seg["id"])
+    if stale:
+        die(f"segments.json 与当前 zh/ 对不上：{len(stale)} 段位置偏移（例如 {stale[0]}）。\n"
+            "这通常是重新跑过 inject_cjk.py 或改过类文件造成的。\n"
+            f"请先重新抽取，再回填：\n"
+            f"  python {Path(__file__).resolve().parent / 'extract.py'} {root} --force\n"
+            "译文按 id 保存，重新抽取不会丢。")
+
     applied = skipped = unchanged = 0
     issues: list[dict] = []
 

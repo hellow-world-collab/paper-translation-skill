@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.0
+version: 1.0.1
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -328,6 +328,17 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | 字体包写在 `\input{preamble}` 里时，A1 方案报上千条错 | 只扫主文件的 `\usepackage`，没发现 newtxmath，照样加 unicode-math | `detect_type1_tree()` 扫全部 tex/sty/cls；`strip_in_tree()` 连被 include 的文件一起摘 |
 | arXiv 包里 `00README.json` 写了主文件却不认 | 只匹配 `"main"` 这个键名，不认 arXiv 的 `usage: toplevel` | `readme_toplevel()` 解析 `sources[]`，取 `usage=toplevel` 的 filename |
 | PDF 分支报「找不到 pdf-formula-translate 技能」 | 旧版把外部技能目录当硬依赖，clone 仓库的人一定踩 | 仓库自带 `scripts/pdf_translate.py`，优先用它；外部技能只作退路 |
+| 显示「0 错误」，PDF 里却缺符号、缺公式 | `-file-line-error` 下 TeX 不再打印行首 `!`，旧的 `^!` 计数全部漏掉 | `_common.error_lines()` 同时认 `f.tex:12:` 形式；preflight / inject / build 统一改用它 |
+| caption 宏包报 `Can be used only in preamble` | `\captionsetup` 被放进了 `\AtBeginDocument` | 移到 `\begin{document}` 之前的顶层 |
+| 附录里的 `\bm{\omega}` 变成空白 | A1 方案摘掉 `bm` 后没给替代 | 注入 `\providecommand{\bm}[1]{\symbf{#1}}` |
+| 表格里的 ✓ 全是空格 | `amssymb` 被摘掉后 `\checkmark` 落到拉丁字体，没有 U+2713 | 在 `\AtBeginDocument` 里改用 pifont 的 `\ding{51}`（`\checkmark` 要到这时才定义） |
+| `Abstract:` / `Keywords:` 仍是英文 | 类文件写死的是带冒号的版本，正则只匹配不带冒号的 | `CLASS_LOCALIZE` 补 `\textbf{Abstract:}` / `\textbf{Keywords:}` |
+| `\resizebox{...}{...}{\begin{tabular}...}` 包住的整张表一个字都不译 | `resizebox` 列在 `OPAQUE_COMMANDS` 里，整块被保护 | 从 OPAQUE 移除，交给 `TEXT_COMMANDS` + `MIXED_ARGS`（长度参数仍不译） |
+| 表头 `\textbf{Environment}` 不译 | 递归进命令参数时用的是函数参数 `ctx`，把 cell 丢回 body | 改用当前环境 `sub_ctx = cur()` |
+| `\item Vectors:` 这类单词条目名不译 | 只给 `\item[...]` 放宽到 1 个词，普通 `\item` 仍按正文两个词 | 段首紧跟 `\item` 时按 item 语境；另外把 `no/yes/on/off` 加入短词白名单 |
+| 重跑 `inject_cjk` 后回填，中文被塞进英文单词中间、摘要只剩半句 | `segments.json` 记的是字符偏移，注入块长度一变全部平移；旧逻辑看到文件就复用 | segments 记 `zh/` 指纹，对不上自动重抽；`apply.py` 再逐段核对 `source`，不一致直接报错而不是硬写 |
+| `audit.py --png` 崩在 `too many values to unpack` | `residue` 改成 dict 之后，导出图片仍按二元组解包 | 改取 `r["page"]` |
+| `Algorithm 1` 仍是英文 | caption 宏包在加载时就把浮动体名字抓走了，改 `\algorithmname` 不生效 | `\captionsetup[algorithm]{name=算法}` |
 
 ### 分批翻译别用 offset
 

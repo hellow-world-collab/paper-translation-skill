@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from dataclasses import asdict, dataclass, field
@@ -44,6 +45,9 @@ TEXT_COMMANDS = {
     "textbf", "textit", "emph", "textsf", "texttt", "textrm", "textsc",
     "textsl", "textup", "textmd", "textnormal", "underline", "uline",
     "item", "text", "mbox", "makebox", "fbox", "framebox", "parbox",
+    # 缩放/旋转盒子的内容是正文：论文常写
+    # \resizebox{\columnwidth}{!}{\begin{tabular}...}，不进去就整张表都不译
+    "resizebox", "scalebox", "adjustbox", "rotatebox", "resizebox*", "raisebox",
     "shortstack", "centerline", "leftline", "rightline",
     "affiliation", "institution", "email", "keywords", "keyword",
     "acknowledgments", "acknowledgements", "acks",
@@ -64,7 +68,8 @@ OPAQUE_COMMANDS = {
     "definecolor", "color", "vspace", "hspace", "setlength", "addtolength",
     "setcounter", "addtocounter", "phantom", "hphantom", "vphantom",
     "rule", "cline", "hline", "toprule", "midrule", "bottomrule",
-    "resizebox", "scalebox", "rotatebox", "raisebox", "adjustbox",
+    # resizebox/scalebox/rotatebox/adjustbox 的内容是正文（见 TEXT_COMMANDS 与 MIXED_ARGS），
+    # 不能整体保护，否则 \resizebox 包住的整张表都不会被抽取
     "graphicspath", "DeclareGraphicsExtensions", "hypersetup",
     "geometry", "linespread", "pagestyle", "thispagestyle", "pagenumbering",
     "clubpenalty", "widowpenalty", "interlinepenalty", "tolerance",
@@ -432,8 +437,10 @@ def tokenize(s: str, start: int = 0, end: int | None = None,
                     push("protect", i, args_start)
                     local_start = args_start
                 opaque_idx = MIXED_ARGS.get(name, set())
-                # 题注 / 标题里的文字按短标签处理（一个词也译）
-                sub_ctx = ctx
+                # 题注 / 标题里的文字按短标签处理（一个词也译）。
+                # 必须取 cur() 而不是函数参数 ctx：表格里 \textbf{Environment}
+                # 的 ctx 是 cell，用参数会退回 body，单词表头就被丢掉。
+                sub_ctx = cur()
                 if name in ("caption", "subcaption", "captionof"):
                     sub_ctx = "caption"
                 elif name in ("section", "subsection", "subsubsection", "paragraph",
@@ -498,6 +505,9 @@ def _has_words(s: str) -> bool:
     return bool(re.search(r"[A-Za-z\u4e00-\u9fff]{2,}", s))
 
 
+SHORT_WORDS = {"no", "yes", "on", "off"}
+
+
 def looks_like_prose(text: str, min_words: int = 2) -> bool:
     r"""判断一段文本是否值得翻译。
 
@@ -520,7 +530,8 @@ def looks_like_prose(text: str, min_words: int = 2) -> bool:
         return True
     if len(words) == 1:
         w = words[0]
-        return len(w) >= 3 and not w.isupper()
+        # 表格里的开关值常常只有两个字母（no / on），也要译
+        return (len(w) >= 3 or w.lower() in SHORT_WORDS) and not w.isupper()
     return False
 
 
@@ -548,8 +559,13 @@ def group_segments(tokens: list[Token], text: str, rel: str,
         # 语境取第一个真正的文字 token：segment 往往以保护标记开头（{\caption 的
         # 左括号、\item 的 '['），那是 body 语境，会把「一个词也译」的规则吃掉。
         ctx = next((t.ctx for t in buf if t.kind == "text" and t.value.strip()), "body")
+        # 普通 \item 后面紧跟的短语（`\item Vectors:`）也是条目名，往往只有一个词，
+        # 之前按正文的「至少两个词」规则整条丢掉，列表里就留下英文小标题
+        head = text[max(0, buf[0].start - 32): buf[0].start]
+        after_item = re.search(r"\\item\s*$", head) is not None
         heading = bool(HEADING_RE.match(source)) and _has_words(source)
-        min_words = 1 if (heading or ctx in ("heading", "caption", "cell", "item")) else 2
+        min_words = 1 if (heading or after_item
+                          or ctx in ("heading", "caption", "cell", "item")) else 2
         if not looks_like_prose(source, min_words):
             buf = []
             return
@@ -654,6 +670,21 @@ def learn_listing_envs(texts: list[str]) -> set[str]:
     return found
 
 
+def zh_fingerprint(zh: Path, files: list[str]) -> str:
+    """zh/ 内容的指纹。注入块长度变化会让所有偏移量平移，旧 segments 就不能再用。"""
+    h = hashlib.sha256()
+    targets = [zh / f for f in files]
+    targets += sorted(zh.glob("*.sty")) + sorted(zh.glob("*.cls"))
+    for p in targets:
+        if not p.is_file():
+            continue
+        h.update(p.name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(p.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
+
 def main():
     ap = argparse.ArgumentParser(description="抽取可翻译片段")
     ap.add_argument("project")
@@ -669,14 +700,18 @@ def main():
     if not zh.is_dir():
         die("zh/ 不存在，请先跑 inject_cjk.py")
 
+    files = [f for f in manifest["tex_files"]
+             if (zh / f).is_file() and not re.search(r"(^|/)00README", f)]
+    stamp = zh_fingerprint(zh, files)
+
     out = arz / "segments.json"
     if out.is_file() and not args.force:
         data = load_json(out)
-        ok(f"复用已有抽取结果：{len(data['segments'])} 段")
-        return
-
-    files = [f for f in manifest["tex_files"]
-             if (zh / f).is_file() and not re.search(r"(^|/)00README", f)]
+        if data.get("fingerprint") == stamp:
+            ok(f"复用已有抽取结果：{len(data['segments'])} 段")
+            return
+        # 旧包没有 fingerprint 字段时也在这里重新抽，宁可多跑几秒
+        warn("zh/ 内容与上次抽取时不同（多半是重新注入了字体或改了类文件），重新抽取")
 
     # 先扫一遍全文，把自定义代码环境登记进不译集合
     discovered = learn_listing_envs([read_text(zh / f) for f in files])
@@ -705,6 +740,7 @@ def main():
 
     save_json(out, {
         "project": str(root),
+        "fingerprint": stamp,
         "files": per_file,
         "segments": [asdict(s) for s in all_segs],
         "stats": {

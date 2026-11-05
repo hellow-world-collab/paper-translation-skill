@@ -19,12 +19,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import (die, find_bin, load_json, meta_dir, ok, pdf_pages,
-                     pdf_text, read_text, run, save_json, warn, write_text,
-                     xetex_flags)
+from _common import (die, error_lines, find_bin, load_json, meta_dir, ok,
+                     pdf_pages, pdf_text, read_text, run, save_json, warn,
+                     write_text, xetex_flags)
 
 OVERFULL = re.compile(r"^Overfull \\hbox \(([\d.]+)pt too wide\) in paragraph at lines (\d+)", re.M)
-UNDEFINED_CMD = re.compile(r"^! Undefined control sequence\.", re.M)
+UNDEFINED_CMD = re.compile(r"^! Undefined control sequence\.|: Undefined control sequence\.", re.M)
 # biblatex 的 .bbl 由 biber 生成；对它跑 bibtex 只会失败并留下空文献表
 BIBLATEX_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*biblatex\b|\\addbibresource\b")
 
@@ -47,10 +47,12 @@ def pick_bib_tool(work: Path, main: str) -> str | None:
 
 
 def classify(log: str) -> dict:
-    errors = re.findall(r"^! (.+)$", log, flags=re.M)
+    errors = error_lines(log)
     cats: dict[str, int] = {}
     for e in errors:
-        key = e.split(".")[0][:60]
+        # "f.tex:12: Package caption Error: ..." → 取描述部分，按首句归类
+        desc = e.split(": ", 1)[-1] if re.match(r"^[^\s:]+:\d+: ", e) else e.lstrip("! ")
+        key = desc.split(".")[0][:60]
         cats[key] = cats.get(key, 0) + 1
     return {
         "errors": len(errors),

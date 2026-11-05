@@ -18,9 +18,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import (cjk_ratio, die, find_bin, load_json, meta_dir, ok,
-                     pdf_pages, pdf_text, read_text, run, save_json, warn,
-                     write_text, xetex_flags)
+from _common import (cjk_ratio, count_errors, die, error_lines, find_bin,
+                     load_json, meta_dir, ok, pdf_pages, pdf_text, read_text,
+                     run, save_json, warn, write_text, xetex_flags)
 
 PROBE = "中文探针检测ABC"
 
@@ -156,6 +156,11 @@ def build_injection(text: str, recipe: dict,
                         f"unicode-math 与 {', '.join(gone2)} 互斥，已移除；"
                         "\\mathbb 等符号由 unicode-math 提供"
                     )
+                # bm 被摘掉后正文里的 \bm{...} 会变成未定义命令（非停模式下只是静默丢符号），
+                # 补一个同义宏，交给 unicode-math 的 \symbf 承担
+                if "bm" in removed:
+                    lines.append("\\providecommand{\\bm}[1]{\\symbf{#1}}")
+                    notes.append("bm 与 unicode-math 互斥，\\bm 已由 \\symbf 接管")
 
     stack = CJK_STACKS[recipe["cjk"]]
     if not re.search(r"\\usepackage(\[[^\]]*\])?\{xeCJK\}", text):
@@ -201,8 +206,22 @@ def build_injection(text: str, recipe: dict,
     # 直接 renew 命令即可；algorithm 宏包用 \algorithmname
     lines.append("  \\ifdefined\\algorithmcfname\\renewcommand{\\algorithmcfname}{算法}\\fi")
     lines.append("  \\ifdefined\\algorithmname\\renewcommand{\\algorithmname}{算法}\\fi")
-    lines.append("  \\ifdefined\\captionsetup\\captionsetup{figurename=图,tablename=表}\\fi")
+    # amssymb 被摘掉后 \checkmark 由 unicode-math 在 \begin{document} 时才定义成
+    # “字符 ✓”，而拉丁字体没有 U+2713 —— 编译不报错、表格里却是一格空白。
+    # 装了 pifont 就借它的 Zapf Dingbats 出勾叉；这段必须放在 AtBeginDocument 里，
+    # 因为导言区此时 \checkmark 还没定义（实测 \ifdefined 为假）。
+    lines.append("  \\ifdefined\\ding")
+    lines.append("    \\ifdefined\\checkmark\\renewcommand{\\checkmark}{\\ding{51}}\\fi")
+    lines.append("    \\ifdefined\\xmark\\renewcommand{\\xmark}{\\ding{55}}\\fi")
+    lines.append("  \\fi")
     lines.append("}")
+    # caption 宏包的 \captionsetup 只允许在导言区调用；放进 \AtBeginDocument 会报
+    # "Package caption Error: Can be used only in preamble"（每个 \caption 都再报一次），
+    # 所以这一句必须留在 \begin{document} 之前的顶层
+    lines.append("\\ifdefined\\captionsetup\\captionsetup{figurename=图,tablename=表}\\fi")
+    # 装了 caption 宏包时，algorithm 浮动体的名字在宏包加载时就被抓走了，
+    # 改 \algorithmname 不生效（实测仍出 "Algorithm 1"），必须走 captionsetup
+    lines.append("\\ifdefined\\captionsetup\\captionsetup[algorithm]{name=算法}\\fi")
 
     block = (
         "\n% ===== arxiv-zh-tex: 字体与中文支持（自动注入）=====\n"
@@ -221,6 +240,11 @@ def _strip_only(text: str, names: set[str]) -> str:
 CLASS_LOCALIZE = [
     (re.compile(r"\\textbf\{Abstract\s*\$\\vert\$\}"), r"\\textbf{摘要 $\\vert$}"),
     (re.compile(r"\\textbf\{Abstract\}"), r"\\textbf{摘要}"),
+    # CoRL / ICLR 一类模板把标签写死成「Abstract:」「Keywords:」（带冒号），
+    # 上面那条不带冒号的正则匹配不到，PDF 里就会留下英文标签
+    (re.compile(r"\\textbf\{Abstract:\}"), r"\\textbf{摘要：}"),
+    (re.compile(r"\\textbf\{Keywords:\}"), r"\\textbf{关键词：}"),
+    (re.compile(r"\\textbf\{Keywords\}"), r"\\textbf{关键词}"),
     # babel 的 captionsenglish 钩子会在 \begin{document} 时把 \refname 改回英文，
     # 注入块里的 renewcommand 会被覆盖，只能改类文件里的这行
     (re.compile(r"(\\addto\{\\captionsenglish\}\{\\renewcommand\{\\refname\}\{)References(\}\})"), r"\1参考文献\2"),
@@ -296,7 +320,7 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
     for _ in range(2):
         _, log = run([binary, *flags, main], cwd=work, timeout=900)
 
-    errors = len(re.findall(r"^!", log, flags=re.M))
+    errors = count_errors(log)
     pdf = work / (Path(main).stem + ".pdf")
     text = pdf_text(pdf) if pdf.is_file() else ""
     probe_hit = "探针" in text
@@ -306,9 +330,12 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
     diag = []
     if "cannot be found" in log:
         diag.append("字体名解析失败（可能被 \\defaultfontfeatures 的 Extension 污染）")
-    missing = len(re.findall(r"Missing character: There is no", log))
-    if missing:
-        diag.append(f"缺字警告 {missing} 条（汉字走了非 CJK 字体）")
+    miss_chars = re.findall(r"Missing character: There is no (\S+) in font", log)
+    if miss_chars:
+        uniq = sorted(set(miss_chars))
+        sample = " ".join(uniq[:12]) + (" …" if len(uniq) > 12 else "")
+        diag.append(f"缺字 {len(miss_chars)} 处 / {len(uniq)} 种：{sample}"
+                    f"（该字体里没有这些字形，编译不报错但 PDF 会留白）")
     if not diag and not probe_hit:
         diag.append("字体已加载但提取不到中文（多半是无 ToUnicode）")
 
@@ -325,9 +352,7 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
         "cjk_chars": len(re.findall(r"[\u4e00-\u9fff]", text)),
         "removed": removed,
         "notes": notes + diag,
-        "log_tail": "\n".join(
-            [l for l in log.splitlines() if l.startswith("!")][:5]
-        ),
+        "log_tail": "\n".join(error_lines(log)[:5]),
     }
 
     if keep and probe_hit:

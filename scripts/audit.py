@@ -370,7 +370,7 @@ def main():
     print(f"\n  报告  {arz / 'audit.md'}")
 
     if args.png:
-        key = [1, 2] + sorted({p for p, _ in residue[:2]})
+        key = [1, 2] + sorted({r["page"] for r in residue[:2]})
         made = export_png(pdf, arz, key)
         if made:
             ok(f"导出 {len(made)} 张页面图：{', '.join(Path(m).name for m in made)}")

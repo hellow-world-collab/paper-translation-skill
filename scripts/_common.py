@@ -211,6 +211,23 @@ def xetex_flags(root: Path) -> list[str]:
     return flags
 
 
+# -file-line-error 下 TeX 不再打印行首的 "!"，而是 "文件:行号: 描述"。
+# 只认 "^!" 会把所有真实错误漏掉（编译看起来 0 错误，PDF 里却缺了符号）。
+FILE_LINE_ERROR = re.compile(
+    r"^[^\s:][^\s:]*\.(?:tex|sty|cls|ltx|def|cfg|fd|bib):\d+:\s+\S", re.M)
+
+
+def error_lines(log: str) -> list[str]:
+    """按两种格式收集错误行：传统 "! xxx" 与 -file-line-error 的 "f.tex:12: xxx"。"""
+    out = [l for l in log.splitlines() if l.startswith("!")]
+    out += [m.group(0).rstrip() for m in FILE_LINE_ERROR.finditer(log)]
+    return out
+
+
+def count_errors(log: str) -> int:
+    return len(error_lines(log))
+
+
 def die(msg: str, code: int = 1):
     print(msg, file=sys.stderr)
     raise SystemExit(code)
