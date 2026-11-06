@@ -367,6 +367,7 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | 重跑 `inject_cjk` 后回填，中文被塞进英文单词中间、摘要只剩半句 | `segments.json` 记的是字符偏移，注入块长度一变全部平移；旧逻辑看到文件就复用 | segments 记 `zh/` 指纹，对不上自动重抽；`apply.py` 再逐段核对 `source`，不一致直接报错而不是硬写 |
 | `audit.py --png` 崩在 `too many values to unpack` | `residue` 改成 dict 之后，导出图片仍按二元组解包 | 改取 `r["page"]` |
 | `Algorithm 1` 仍是英文 | caption 宏包在加载时就把浮动体名字抓走了，改 `\algorithmname` 不生效 | `\captionsetup[algorithm]{name=算法}` |
+| 编译 0 错误、体检 100%，PDF 里却整段英文，粗体小标题也还是英文 | `\noindent{\textbf{标题}} {同一行紧接的长段}` 里的 `noindent` 被列进 `OPAQUE_COMMANDS`，参数解析又把两个分组一并吞掉，标题与正文都不进 segments；2607.15036 实测漏 8 个小标题 + 3 段正文（集中在 p11/p12），`audit.py` 的「英文成片」告警才把它揪出来 | 新增 `DECLARATION_COMMANDS`：`noindent` / `indent` / `centering` / 字号声明等无参命令只保护命令名，紧随的 `{..}` 分组按正文递归抽取。该文片段 295→297、覆盖率 85%→87%，A/B 去掉标记编号后原有可译句 0 丢失；以 masked 原样回填与英文基线逐字节一致 |
 
 ### 分批翻译别用 offset
 

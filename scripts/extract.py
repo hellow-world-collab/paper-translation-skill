@@ -77,6 +77,15 @@ OPAQUE_COMMANDS = {
     "newpage", "clearpage", "cleardoublepage", "pagebreak", "linebreak",
     "bibliographyitem", "printbibliography", "appendix",
 }
+# 无参声明命令：只保护命令名本身，紧随其后的 {..} 分组仍是正文。
+# 论文里常见 \noindent{\textbf{小标题}} {同一行紧接的长段}：若按「带参的不译命令」
+# 处理，循环会把两个分组一并吞掉，小标题与整段正文都不进 segments，
+# 最终留在中文 PDF 里是英文（2607.15036 实测漏 8 个小标题 + 3 段正文）。
+DECLARATION_COMMANDS = {
+    "noindent", "indent", "centering", "raggedright", "raggedleft",
+    "flushleft", "flushright", "small", "normalsize", "large", "Large", "LARGE",
+}
+
 # 前后参数角色不同：值为「不译的下标」
 MIXED_ARGS = {
     "href": {0}, "textcolor": {0}, "colorbox": {0}, "fcolorbox": {0, 1},
@@ -380,6 +389,14 @@ def tokenize(s: str, start: int = 0, end: int | None = None,
                         stack.append("cell")
                     i = k2
                     continue
+                push("protect", i, j)
+                i = j
+                continue
+
+            # 无参声明命令：保留命令名，让后面的 {..} 分组按正文抽取。
+            # 必须放在「必选参数」解析之前，否则 \noindent{\textbf{X}} {长段}
+            # 的两个分组会被当成同一条命令的参数整体保护。
+            if name in DECLARATION_COMMANDS:
                 push("protect", i, j)
                 i = j
                 continue
