@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.2
+version: 1.0.3
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -407,7 +407,7 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | 一篇论文要十几轮翻译、每轮还要手写 Python 字典字面量 | 按「25 段」分批，实测单批源文 710～18,209 字符、差 25 倍；译文又得完整重打一遍 | `pending.py --budget 18000` 按字符切批（295 段 12 批→5 批，每批 1.3–1.8 万字符）；`submit.py` 直读 TSV/JSON、整批原子校验写入 |
 | 体检 100%、编译 0 错误却漏译，最后靠人眼翻 PDF 才发现 | `check_tr` 只比对 translations 与 segments，看不见「根本没被抽到的正文」 | 新增 `check_coverage.py`：用 segments 的 `[start,end]` 做位置差集；`check_tr` / `build` 同步接入并拦编译。修复前报 25 处 / 2018 字符，修复后 0 处 |
 | `sim-to-real` 被译成「仿真到真机」，只能事后写脚本全局替换 | `glossary.tsv` 只是给模型看的建议，提交时没有强制力 | 加第 4 列「禁用译法」，`submit.py` 当硬约束检查，违例整批拒绝 |
-| `audit` 报 `pose` 命中 18 次，逐条查几乎全是误报 | 术语正则只有尾部 `\b`，`pose` 命中了 pro**pose** / im**pose** / pur**pose** | `term_consistency()` 补前置 `\b`（术语以单词字符开头时） |
+| `audit` 报 `pose` 命中 18 次，逐条查几乎全是误报 | 术语正则只有尾部 `\b`，`pose` 命中了 pro**pose** / im**pose** / pur**pose** | `term_consistency()` 改用前后负向环视 `(?<![A-Za-z0-9])` / `(?![A-Za-z0-9])`。**不能补前置 `\b`**：中文属于 `\w`，「鲁棒的sim-to-real」里「的」与 `s` 之间没有词边界，会被整个漏掉。实测 `pose` 误报消失、`sim-to-real` 命中率 50%→100% |
 | 每篇都生成 47 MB 的单文件对照页 | `--single-file` 写进了示例命令，其实本机看目录版就够 | 示例去掉 `--single-file`、默认不生成；需要发给别人时才加。目录版的三档视图、搜索、划选、缩放一样不少 |
 
 ### 分批翻译别用 offset
