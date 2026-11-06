@@ -139,15 +139,21 @@ def main():
     from check_tr import scan as scan_tr
     chk = scan_tr(root)
     n_missing, n_thin = len(chk["missing"]), len(chk["low_cjk"])
+    n_uncovered = len(chk.get("uncovered", []))
     print(f"\n[{root.name}] 译文体检：已译 {chk['translated']}/{chk['total']}"
-          f"  缺译 {n_missing}  中文过少 {n_thin}  成片英文 {len(chk['latin_runs'])}")
-    if (n_missing or n_thin) and not args.allow_partial:
+          f"  缺译 {n_missing}  中文过少 {n_thin}  成片英文 {len(chk['latin_runs'])}"
+          f"  未抽取正文 {n_uncovered}")
+    if (n_missing or n_thin or n_uncovered) and not args.allow_partial:
         for it in chk["missing"][:5]:
             print(f"    缺译 {it['id']:<24} {it['src'][:60]}")
         for it in chk["low_cjk"][:5]:
             print(f"    过少 {it['id']:<24} 汉字 {it['cjk']:.0%}  {it['tr'][:50]}")
-        die(f"有 {n_missing + n_thin} 段没翻，编出来会半中半英。\n"
+        for it in chk.get("uncovered", [])[:5]:
+            print(f"    未抽取 {it['file']}:{it['line']}  {it['text'][:60]}")
+        die(f"有 {n_missing + n_thin} 段没翻、{n_uncovered} 处正文没被抽取，"
+            f"编出来会半中半英。\n"
             f"    补齐 {arz / 'translations.json'} 后重跑 apply.py；\n"
+            f"    未抽取正文要修 extract.py 后重跑 extract.py --force；\n"
             f"    确实要带着英文编译就加 --allow-partial。")
 
     pdf = work / (Path(main_file).stem + ".pdf")
@@ -194,7 +200,18 @@ def main():
             warn(f"{bib_tool} 失败：{' / '.join(tail)[:200]}")
         info, log = compile_pass()
 
+    # TeX 自己会在 log 里提示交叉引用没收敛；没有提示就说明再编译也不会变。
+    # 默认 rounds=3 时，稳定论文原先固定跑 4 遍 xelatex；收敛后即停，
+    # 2607.15036 实测 3 遍（省 1 遍），交叉引用真有变化时仍会跑满。
+    RERUN_HINT = re.compile(
+        r"Rerun to get (?:the )?cross-references right|"
+        r"Label\(s\) may have changed|"
+        r"There were undefined (?:references|citations)|"
+        r"Rerun to get citations correct", re.I)
     for _ in range(max(1, args.rounds - 1)):
+        if not RERUN_HINT.search(log):
+            print(f"  交叉引用已收敛，跳过剩余编译遍数（已跑 {counter['n']} 遍）")
+            break
         info, log = compile_pass()
 
     log = read_text(log_path) if log_path.is_file() else out

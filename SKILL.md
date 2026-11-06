@@ -103,17 +103,21 @@ python $S/route.py <arXiv ID / 链接 / PDF / .tex 目录 / 压缩包>   # 只�
 ## LaTeX 分支（有源码）
 
 ```bash
-python $S/fetch.py 2508.08241 --out ./2508.08241      # ① 取源码、认主文件
+python $S/fetch.py 2508.08241 --out ./2508.08241       # ① 取源码、认主文件
 python $S/preflight.py ./2508.08241                    # ② 基线编译 + xetex 探测
+#   已知环境 xelatex 可用时可加 --skip-xetex，省一轮 3 遍的探测编译
 python $S/inject_cjk.py ./2508.08241                   # ③ 注入中文字体（实证验证）
-#            ↓ ④ 翻译（见下节，由模型完成）
+python $S/extract.py ./2508.08241                      # ③b 抽取可译片段
+python $S/check_coverage.py ./2508.08241               # ③c 翻译前查未抽取正文（必须清零）
+#            ↓ ④ 翻译（见下节，按字符预算分批 + submit.py 提交）
 python $S/apply.py ./2508.08241                        # ⑤ 回填
-python $S/check_tr.py ./2508.08241                     # ⑤b 译文体检（缺译就停）
-python $S/build.py ./2508.08241                        # ⑥ 编译
+python $S/check_tr.py ./2508.08241                     # ⑤b 译文体检（缺译/未抽取就停）
+python $S/build.py ./2508.08241                        # ⑥ 编译（交叉引用收敛即停）
 python $S/audit.py ./2508.08241 --png                  # ⑦ 审计
 python $S/render_compare.py --root ./2508.08241 \      # ⑧ 双栏对照页（可选）
     --original .arz/original_arxiv.pdf --translated out/main.pdf \
-    --out html/compare --single-file "论文_双栏对照.html"
+    --out html/compare
+# 只有需要「一个文件发给别人」时才加：--single-file "论文_双栏对照.html"
 ```
 
 目录约定：
@@ -129,27 +133,34 @@ python $S/render_compare.py --root ./2508.08241 \      # ⑧ 双栏对照页（�
 
 ## 翻译环节
 
-```bash
-python $S/pending.py ./2508.08241 --stats        # 看总进度
-python $S/pending.py ./2508.08241 --limit 25     # 读一批（25 段约 3–5k 字）
-python $S/pending.py ./2508.08241 --offset 25 --limit 25
-python $S/pending.py ./2508.08241 --id tex/intro.tex#0007   # 单段详情含 protected
-```
-
-每读完一批，**立刻**写入 `translations.json`，不要攒到最后（中途断了会全丢）：
+**按字符量分批，不按段数。** 实测 2607.15036 里「25 段」可能是 710 字，也可能是
+18,209 字，差 25 倍；按段数切会多出一倍轮次，还容易撞上下文上限。
+`--budget 18000` 把 295 段切成 **5 批**（旧法 12 批）。
 
 ```bash
-cd ./2508.08241 && python - <<'PY'
-import json, io, os
-p = '.arz/translations.json'
-tr = json.load(io.open(p, encoding='utf-8')) if os.path.exists(p) else {}
-tr.update({
-  "tex/intro.tex#0001": "中文译文，⟪P0001⟫ 标记原样保留……",
-})
-json.dump(tr, io.open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-print('已写入', len(tr), '段')
-PY
+python $S/pending.py ./2508.08241 --stats --budget 18000   # 总进度与预计批数
+python $S/pending.py ./2508.08241 --budget 18000           # 读一批（约 1.8 万字符）
+python $S/pending.py ./2508.08241 --id tex/intro.tex#0007  # 单段详情含 protected
 ```
+
+读完一批，把译文写成**纯数据 TSV**（一行一段：`id<TAB>译文`；不要换行、不要反斜杠、
+`⟪Pnnnn⟫` 原样保留），然后一次提交：
+
+```bash
+# batch.tsv
+# vop_rl.tex#0001	学习在拥挤环境中敏捷导航……⟪P0001⟫
+# vop_rl.tex#0002	……
+python $S/submit.py ./2508.08241 batch.tsv       # 也可用 .json：{"段 id": "译文"}
+python $S/submit.py ./2508.08241 batch.tsv --dry-run
+```
+
+`submit.py` 复用 `apply.check_segment` 的校验规则，并检查 `glossary.tsv` 第 4 列的
+「禁用译法」硬约束（如 `sim-to-real` 不许写「仿真到真机」）；**整批校验通过才原子写入**，
+有一段坏就一段都不写，不会留下半批污染。输出里直接给出剩余段数、字符数与预计批数。
+
+每批都从队头取：**不要用 `--offset`**（下标是待译队列，译完一批会跳段）；
+`--limit/--offset` 只作为旧法保留。中途断了直接重跑 `pending.py --budget 18000`
+就会从没译的第一段继续。
 
 ### 译文书写规则
 
@@ -162,7 +173,9 @@ PY
 
 ### 长文分批
 
-一次 25 段左右，超过 5000 字容易在中途丢失标记。遇到 800 字以上的长段，单独处理。
+`--budget 18000` 是实测值：2607.15036 单批 1.8 万字符能一次译完且不丢标记，
+295 段共 5 批，每批字符量稳定在 1.3–1.8 万。超过 2000 字符的长段会独占一批，
+脚本不会把段切开。若某篇公式标记特别密集，把预算降到 12000；不要退回「固定 25 段」。
 
 ## PDF 分支（只有 PDF）
 
@@ -238,12 +251,18 @@ python $S/render_html.py ./2509.09674 --standalone    # 另出单文件版，图
 python $S/render_compare.py --root ./2509.09674 \
     --original .arz/original_arxiv.pdf \
     --translated out/main.pdf \
-    --out html/compare \
-    --single-file "论文_双栏对照.html"
+    --out html/compare
+# 只有需要「一个文件发给别人」时才加：--single-file "论文_双栏对照.html"
 ```
 
 产物：`html/compare/index.html` + `pdf-en.js` / `pdf-zh.js`（base64 后的两份 PDF，
-按需 `<script>` 载入）；`--single-file` 另出一份全内联的单文件版（约 14 MB，交给别人看用）。
+按需 `<script>` 载入）。目录版双击 `index.html` 就能开（`file://` 下用 Blob worker，
+已验证），**三档视图（双栏 / 原文 / 译文）、搜索、划选复制、任意缩放全都在**。
+
+单文件版只是把这三份内容全内联进一个 HTML，功能完全相同，唯一好处是不用带目录、
+可直接发微信/邮件。代价是体积约等于两份 PDF 之和 × 4/3：2509.00215 的 PDF 各约
+5 MB → 13.7 MB；2607.15036 的 PDF 各 16.7 MB → **47.4 MB**。所以**默认不生成**，
+每篇省约 1 分钟生成时间和一次浏览器验收。
 
 **渲染架构（v1.0.2 起）**：页面不是预烘的图片，而是把 PDF 交给浏览器里的 pdf.js 现渲。
 canvas 的位图尺寸按「CSS 宽度 × devicePixelRatio」实时算，缩放一次重绘一次，
@@ -288,23 +307,38 @@ canvas 的位图尺寸按「CSS 宽度 × devicePixelRatio」实时算，缩放�
   100%↔220% 间切换，`+/-` 与按钮以视口中心为锚点，触屏可双指捏合；范围 40%–400%，100% = 适宽。
   放大后出现横向溢出时可按住拖动平移，两栏横向同步。
 - 体积：目录版 = `index.html`（约 2～3 MB，含引擎）+ `pdf-en.js` / `pdf-zh.js`（base64 的两份 PDF，
-  按需载入）；单文件版把两份 PDF 也内联，约 14 MB。
+  按需载入）；单文件版把两份 PDF 也内联，体积 ≈ 两份 PDF 之和 × 4/3——2509.00215 约 13.7 MB，
+  2607.15036 的 PDF 各 16.7 MB → **47.4 MB**，因此默认不生成。
 - **双击判定是自己实现的**：靠两次 `click` 的间隔与位移，不依赖原生 `dblclick`（部分触控板/CDP 环境不派发）；
   拖动平移也要等位移超过 4 px 才 `preventDefault`，否则会吞掉双击。
   点在文字上时不触发双击放大——那一下留给浏览器的选词（与桌面 PDF 阅读器一致）。
 - 页码差不是错：中文字号紧、行距小，21 页对应原文 24 页，看的是同一节。
 
-## 编译前的译文体检
+## 翻译前 / 编译前的两道检查
 
-`build.py` 现在会先跑 `check_tr.py`，缺译就直接拦下（`--allow-partial` 可强行编译）：
+**① 翻译前先跑 `check_coverage.py`，必须清零。** `check_tr.py` 只比对 translations 与
+segments，对「根本没被抽到的正文」天然报 100% 通过——2607.15036 就吃过这个亏：
+8 个粗体小标题 + 3 段正文 + 3 个 `\makecell` 表头留在中文 PDF 里是英文，体检全绿、
+编译 0 错误，最后靠人翻页才发现。本脚本用 segments 记录的 `[start,end]` 偏移，
+把源文减去已覆盖区间，在剩下的区间里剥掉命令、公式、注释、标签后找成片英文：
 
 ```bash
-python $S/check_tr.py ./2508.08241          # 单独跑：缺译 / 中文过少 / 成片英文
+python $S/check_coverage.py ./2508.08241            # 有可疑漏译退出码 1
+python $S/check_coverage.py ./2508.08241 --warn-only
+```
+
+实测：修复前的 2607.15036 报 **25 处 / 2018 字符**（全是真漏译），修好抽取器重抽后
+**0 处**。报告写在 `.arz/coverage.json`。
+
+**② 编译前 `check_tr.py` 兜底**（`build.py` 会自动跑，`--allow-partial` 可强行编译）：
+
+```bash
+python $S/check_tr.py ./2508.08241          # 缺译 / 中文过少 / 成片英文 / 未抽取正文
 python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 ```
 
-为什么要有这一步：`apply.py` 只校验标记，没提交译文的段会**原样保留英文**；LaTeX 编译又永远成功，
-最后只能人工翻 20 页去发现「第 12 页那段怎么还是英文」。四类判据写在 `.arz/check_tr.json` 里：
+`apply.py` 只校验标记，没提交译文的段会**原样保留英文**；LaTeX 编译又永远成功。
+五类判据写在 `.arz/check_tr.json` 里：
 
 | 类别 | 判据 | 处理 |
 |---|---|---|
@@ -312,6 +346,7 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | 原样返回 | 译文 == 原文 masked（公式、纯符号段属正常） | 只提示不拦 |
 | 中文过少 | 原文 ≥8 个英文词，译文汉字占比 <8% | 视为没译 |
 | 成片英文 | 译文里仍有 ≥7 个连续英文单词 | `--strict` 才算失败，默认只提示 |
+| 未抽取正文 | 源文成片英文落在 segments 区间之外（复用 `check_coverage`） | **拦编译**；修 extract.py 后 `--force` 重抽 |
 
 ## 已知问题与处理
 
@@ -368,6 +403,12 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | `audit.py --png` 崩在 `too many values to unpack` | `residue` 改成 dict 之后，导出图片仍按二元组解包 | 改取 `r["page"]` |
 | `Algorithm 1` 仍是英文 | caption 宏包在加载时就把浮动体名字抓走了，改 `\algorithmname` 不生效 | `\captionsetup[algorithm]{name=算法}` |
 | 编译 0 错误、体检 100%，PDF 里却整段英文，粗体小标题也还是英文 | `\noindent{\textbf{标题}} {同一行紧接的长段}` 里的 `noindent` 被列进 `OPAQUE_COMMANDS`，参数解析又把两个分组一并吞掉，标题与正文都不进 segments；2607.15036 实测漏 8 个小标题 + 3 段正文（集中在 p11/p12），`audit.py` 的「英文成片」告警才把它揪出来 | 新增 `DECLARATION_COMMANDS`：`noindent` / `indent` / `centering` / 字号声明等无参命令只保护命令名，紧随的 `{..}` 分组按正文递归抽取。该文片段 295→297、覆盖率 85%→87%，A/B 去掉标记编号后原有可译句 0 丢失；以 masked 原样回填与英文基线逐字节一致 |
+| 中文 PDF 的表格表头还是 `Static Cylinder` / `Static Rectangular` | `makecell` 不在可译命令表，`\makecell[c]{...}` 整个单元格被保护 | 把 `makecell` / `thead` 加进 `TEXT_COMMANDS`；可选参数 `[c]` 仍由 `opts_end` 保护。2607.15036 片段 297→303，`check_coverage` 清零 |
+| 一篇论文要十几轮翻译、每轮还要手写 Python 字典字面量 | 按「25 段」分批，实测单批源文 710～18,209 字符、差 25 倍；译文又得完整重打一遍 | `pending.py --budget 18000` 按字符切批（295 段 12 批→5 批，每批 1.3–1.8 万字符）；`submit.py` 直读 TSV/JSON、整批原子校验写入 |
+| 体检 100%、编译 0 错误却漏译，最后靠人眼翻 PDF 才发现 | `check_tr` 只比对 translations 与 segments，看不见「根本没被抽到的正文」 | 新增 `check_coverage.py`：用 segments 的 `[start,end]` 做位置差集；`check_tr` / `build` 同步接入并拦编译。修复前报 25 处 / 2018 字符，修复后 0 处 |
+| `sim-to-real` 被译成「仿真到真机」，只能事后写脚本全局替换 | `glossary.tsv` 只是给模型看的建议，提交时没有强制力 | 加第 4 列「禁用译法」，`submit.py` 当硬约束检查，违例整批拒绝 |
+| `audit` 报 `pose` 命中 18 次，逐条查几乎全是误报 | 术语正则只有尾部 `\b`，`pose` 命中了 pro**pose** / im**pose** / pur**pose** | `term_consistency()` 补前置 `\b`（术语以单词字符开头时） |
+| 每篇都生成 47 MB 的单文件对照页 | `--single-file` 写进了示例命令，其实本机看目录版就够 | 示例去掉 `--single-file`、默认不生成；需要发给别人时才加。目录版的三档视图、搜索、划选、缩放一样不少 |
 
 ### 分批翻译别用 offset
 

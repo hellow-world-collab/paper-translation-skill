@@ -53,6 +53,10 @@ TEXT_COMMANDS = {
     "acknowledgments", "acknowledgements", "acks",
     "abstractname", "appendixname", "contentsname", "refname",
     "subcaption", "captionof", "part", "chapter",
+    # makecell 宏包的表头：\makecell[c]{Static Cylinder\\Obstacle} 里的文字是正文，
+    # 整块保护会让中文 PDF 的表格留着英文表头（2607.15036 实测漏 2 个）。
+    # 可选参数 [c] / [l] 是排版对齐，走 opaque_idx 之外仍由 opts_end 保护。
+    "makecell", "thead",
 }
 # 参数不译的命令
 OPAQUE_COMMANDS = {

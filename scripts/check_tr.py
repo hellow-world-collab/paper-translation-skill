@@ -6,11 +6,13 @@
   编译又永远成功（LaTeX 不在乎中英混排），最后只能靠人翻 20 页去发现。
   这一步把「哪些段其实没翻」提前摆出来。
 
-查四类问题：
+查五类问题：
   1. 缺译        segments.json 里有、translations.json 里没有
   2. 疑似原样返回 译文与原文 masked 完全相同（公式段正常，正文段异常）
   3. 中文过少    正文段的汉字占比 < 8%，基本等于没翻
   4. 成片英文    译文里仍有 ≥ 7 个连续英文单词（常见于模型漏抄一截）
+  5. 未抽取正文  源文里是英文正文、却没进 segments.json —— 前四类都查不到它，
+                 由 check_coverage.py 的位置差集给出（旧版漏 8 个小标题 + 3 段正文）
 
 用法：
     python check_tr.py <项目目录>              # 体检，有问题退出码 1
@@ -86,6 +88,11 @@ def scan(root: Path, strict: bool = False) -> dict:
             latin.append({"id": s["id"], "file": s["file"], "words": run_len(longest),
                           "run": longest[:100], "role": s["role"]})
 
+    # 第 5 类：源文里根本没被 extract.py 抽到的英文正文。体检只比对
+    # translations 与 segments，对这类漏译天然是 100% 通过；交给位置差集检查。
+    from check_coverage import scan as scan_coverage
+    uncovered = scan_coverage(root)["suspects"]
+
     total = len(segs)
     done = total - len(missing)
     report = {
@@ -95,7 +102,8 @@ def scan(root: Path, strict: bool = False) -> dict:
         "identical": same,
         "low_cjk": thin,
         "latin_runs": latin,
-        "pass": not (missing or thin or (strict and latin)),
+        "uncovered": uncovered,
+        "pass": not (missing or thin or uncovered or (strict and latin)),
     }
     save_json(arz / "check_tr.json", report)
     return report
@@ -112,6 +120,7 @@ def main() -> int:
     report = scan(root, args.strict)
     missing, same = report["missing"], report["identical"]
     thin, latin = report["low_cjk"], report["latin_runs"]
+    uncovered = report["uncovered"]
     total, done = report["total"], report["translated"]
 
     if args.json:
@@ -134,7 +143,10 @@ def main() -> int:
     print(f"  原样返回  {len(same)}（公式、纯符号段属正常）")
     print(f"  中文过少  {len(thin)}")
     print(f"  成片英文  {len(latin)}")
+    print(f"  未抽取正文 {len(uncovered)}（源文里有、segments 里没有）")
 
+    block("源文里没被抽取的英文正文（覆盖率体检查不到，需修 extract.py）", uncovered,
+          lambda it: f"{it['file']}:{it['line']:<5} {it['text'][:70]}")
     block("缺译（这些段会原样保留英文）", missing,
           lambda it: f"{it['id']:<28} {it['file']}  {it['src']}")
     block("中文过少（几乎等于没翻）", thin,

@@ -50,7 +50,7 @@
 
 - **排版不动**：在原作者自己的类文件里换字，不另起炉灶重排。图、表、编号、`\ref` 的指向都跟原文一致。
 - **公式不动**：模型看到的是 `⟪P0001⟫` 这样的占位标记，回填时只替换标记内的自然语言。数学符号没有机会被写坏。
-- **可以核对**：每一段译文都记着它来自哪个源片段；`audit.py` 给出页数、中文覆盖率、图表数量，`check_tr.py` 找出缺译和成片英文。
+- **可以核对**：每一段译文都记着它来自哪个源片段；`audit.py` 给出页数、中文覆盖率、图表数量，`check_coverage.py` 在翻译前找出「根本没被抽到的正文」，`check_tr.py` 找出缺译和成片英文。
 
 ## 两条分支
 
@@ -162,20 +162,25 @@ S=~/.workbuddy/skills/arxiv-zh-tex/scripts
 python $S/route.py 2508.08241                    # 打印判定结果和下一步命令
 
 # 1) LaTeX 分支
-python $S/fetch.py      2508.08241 --out ./2508.08241
-python $S/preflight.py  ./2508.08241
-python $S/inject_cjk.py ./2508.08241
-#      ↓ 翻译（由模型按段完成，写 translations.json）
-python $S/apply.py      ./2508.08241
-python $S/check_tr.py   ./2508.08241
-python $S/build.py      ./2508.08241
-python $S/audit.py      ./2508.08241 --png
+python $S/fetch.py          2508.08241 --out ./2508.08241
+python $S/preflight.py      ./2508.08241
+python $S/inject_cjk.py     ./2508.08241
+python $S/extract.py        ./2508.08241
+python $S/check_coverage.py ./2508.08241          # 翻译前查未抽取正文，必须清零
+#      ↓ 翻译：按字符预算读一批 → 写 batch.tsv → 一次提交（约 5 批）
+python $S/pending.py        ./2508.08241 --budget 18000
+python $S/submit.py         ./2508.08241 batch.tsv
+python $S/apply.py          ./2508.08241
+python $S/check_tr.py       ./2508.08241
+python $S/build.py          ./2508.08241
+python $S/audit.py          ./2508.08241 --png
 
 # 对照页要用「原文 PDF」，fetch 只下源码，这一步得自己抓一次
 curl -L -o ./2508.08241/.arz/original_arxiv.pdf https://arxiv.org/pdf/2508.08241
 python $S/render_compare.py --root ./2508.08241 \
     --original .arz/original_arxiv.pdf --translated out/main.pdf \
-    --out html/compare --single-file "论文_双栏对照.html"
+    --out html/compare
+# 需要「一个文件发给别人」才加 --single-file "论文_双栏对照.html"
 
 # 2) PDF 分支（没有源码 / 用户指定）
 python $S/pdf_mode.py 论文.pdf --project ./论文 --compare
@@ -201,14 +206,16 @@ scripts/
   inject_cjk.py          注入中文字体（带哨兵验证）
   extract.py             切段、抽标记 → segments.json
   apply.py               回填译文 → 新的 .tex
-  check_tr.py            译文体检（缺译 / 中文过少 / 成片英文）
-  build.py               编译（内部先跑 check_tr）
+  check_coverage.py      翻译前的抽取覆盖率检查（找出没进 segments 的英文正文）
+  check_tr.py            译文体检（缺译 / 中文过少 / 成片英文 / 未抽取正文）
+  submit.py              批量提交译文（TSV / JSON、原子写入、术语硬约束）
+  build.py               编译（内部先跑 check_tr，交叉引用收敛即停）
   audit.py               产物审计（页数、中文覆盖率、图表数量、参考文献）
   render_html.py         段落级重排网页（旧版，可选）
   render_compare.py      页面级对照页（左原文 / 右译文，pdf.js 现渲）
   pdf_mode.py            PDF 分支：建 .venv-pdf、调翻译器、接对照页
   pdf_translate.py       PDF 分支的翻译器（直接调 pdf2zh，不依赖外部技能）
-  pending.py             待译片段清单
+  pending.py             待译片段清单（--budget 按字符量切批）
   env_check.py           环境自检：xelatex / pdftoppm / pymupdf / Python 版本
   package_market.py      打技能市场包（压平 KaTeX、剔开发资源、自检层级与体积）
   _common.py             路径、原子写、JSON 读写、编译参数

@@ -1,7 +1,8 @@
 ﻿# arXiv 论文中译术语表  v1（2026-11-04）
-# 格式：原文 <TAB> 译名 <TAB> 备注
+# 格式：原文 <TAB> 译名 <TAB> 备注 <TAB> 禁用译法（可选，多个用 | 分隔）
 # 备注含「待定」的条目需人工确认；含「保留」的条目在中文正文中原样保留英文。
-# 脚本读取时忽略以 # 开头的行。
+# 第 4 列由 submit.py 当硬约束：译文里出现这些写法就整批拒绝，不再等编译后人工 replace。
+# 脚本读取时忽略以 # 开头的行；audit.py 只用前三列。
 
 # ── 一、跟踪与控制 ────────────────────────────────────────────
 motion tracking	运动跟踪	
@@ -99,7 +100,7 @@ angular velocity	角速度
 linear velocity	线速度	
 
 # ── 五、部署与感知 ────────────────────────────────────────────
-sim-to-real	sim-to-real	保留
+sim-to-real	sim-to-real	保留	仿真到真机|仿真到真实
 sim-to-real transfer	sim-to-real 迁移	
 state estimation	状态估计	
 odometry	里程计	

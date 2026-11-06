@@ -94,7 +94,13 @@ def term_consistency(segments: list[dict], translations: dict) -> list[dict]:
             continue
         # motion-tracking / motion  tracking 都要算命中
         flex = re.escape(en).replace(r"\ ", r"[\s\-]+")
-        pattern = re.compile(flex + r"s?\b", re.I)
+        # 前后都不能粘着英文字母/数字，否则 pose 会命中 proPOSE / imPOSE / purPOSE
+        # （2607.15036 实测 18 次「命中」里 17 次是这类子串误报）。
+        # 不能用 \b：中文属于 \w，「鲁棒的sim-to-real」里「的」与 s 之间没有词边界，
+        # 会把正常的中英混排术语漏掉。负向环视只管拉丁字符，正好。
+        prefix = r"(?<![A-Za-z0-9])" if en[0].isalnum() else ""
+        suffix = r"(?![A-Za-z0-9])"
+        pattern = re.compile(prefix + flex + r"s?" + suffix, re.I)
         src_n = len(pattern.findall(src))
         if src_n < 3:
             continue

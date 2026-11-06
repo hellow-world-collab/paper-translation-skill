@@ -353,6 +353,9 @@ def main() -> None:
         single.write_text(fill(tpl, meta, title, sub, pdfjs_tag, worker_tag, single_tag),
                           encoding="utf-8")
         print(f"      写出 {single}  ({human(single.stat().st_size)})")
+    else:
+        print("      未生成单文件版（默认）：本机看目录版即可，三档视图、搜索、划选都在；"
+              "\n      需要发给别人时再加 --single-file <文件名>.html。")
 
 
 if __name__ == "__main__":
