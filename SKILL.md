@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.3
+version: 1.0.4
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -97,7 +97,10 @@ python $S/route.py <arXiv ID / 链接 / PDF / .tex 目录 / 压缩包>   # 只�
 | 参考文献条目 | ❌ | `.bbl` / `thebibliography` 不动 |
 
 判定看「语境 + 词数」：正文要至少两个英文词；题注 / 单元格 / 术语只要一个
-（首字母大写或全小写、≥3 个字母），全大写缩写（PPO / GPU）仍然跳过。
+（首字母大写或全小写、≥3 个字母）。表格单元格里的全大写缩写（PPO / GPU / RVO）
+仍然跳过；但章节标题即使整词大写（`\section{METHOD}` / `\section{EXPERIMENTS}`）
+也要收，否则中文 PDF 里会留着「III. METHOD」。`check_coverage.py` 对漏掉的
+`\section{...}` 单独报警，不靠「成片英文」的词数阈值。
 语境随命令参数递归下传、随环境切换（`tabular` → `cell`），实现在 `extract.Token.ctx`。
 
 ## LaTeX 分支（有源码）
@@ -154,9 +157,10 @@ python $S/submit.py ./2508.08241 batch.tsv       # 也可用 .json：{"段 id": 
 python $S/submit.py ./2508.08241 batch.tsv --dry-run
 ```
 
-`submit.py` 复用 `apply.check_segment` 的校验规则，并检查 `glossary.tsv` 第 4 列的
-「禁用译法」硬约束（如 `sim-to-real` 不许写「仿真到真机」）；**整批校验通过才原子写入**，
-有一段坏就一段都不写，不会留下半批污染。输出里直接给出剩余段数、字符数与预计批数。
+`submit.py` 复用 `apply.check_segment` 的结构校验；`glossary.tsv` 第 4 列的
+「建议避开写法」只提示、不拦截（术语表是参考，按语境偏离属正常）。
+**结构校验通过才原子写入**，有一段坏就一段都不写，不会留下半批污染。
+输出里直接给出剩余段数、字符数与预计批数。
 
 每批都从队头取：**不要用 `--offset`**（下标是待译队列，译完一批会跳段）；
 `--limit/--offset` 只作为旧法保留。中途断了直接重跑 `pending.py --budget 18000`
@@ -167,7 +171,7 @@ python $S/submit.py ./2508.08241 batch.tsv --dry-run
 1. **所有 `⟪Pnnnn⟫` 必须保留**，数量与编号不能变。位置可以按中文语序调整——`⟪P0002⟫` 是 `\cite{...}` 时，中文里放到句末读起来更顺，这是允许的。
 2. **不许出现反斜杠**。译文里写 `\%`、`\textbf` 会被回填校验拒绝，整段退回原文。百分号直接写 `%`，加重语气靠句式而不靠命令。
 3. **数字、单位、专有名词照抄**：`$27.38\%$` 这类整体在标记里，不要自己补；`Unitree G1`、`IsaacSim`、`PPO` 不译。
-4. **术语查 `glossary.tsv`**（139 条，含"保留英文"标记）。表里没有的按同风格现定，顺手记进 `glossary.suggested.tsv`。
+4. **术语表只是参考**（`glossary.tsv`，138 条，含「保留英文」标记）。同一个英文词在不同论文语境下完全可能有更贴切的译法——`joint state` 在 SEA-Nav 里是「联合状态」而不是表里的「关节」，`early termination` 是「提前终止」而非「终止条件」——**按本篇语境判断后直接偏离即可，不必迁就表内译名**；表里没有的按同风格现定，顺手记进 `glossary.suggested.tsv`。第 4 列「建议避开的写法」命中时脚本只提示，不拦截。
 5. **图注要译**（caption 是正文）；图内标注不译（抽取时已跳过 `tikzpicture`/`pgfplots` 等环境）。
 6. **不要扩写**。原文一句就是一句，不要补背景、不要合并相邻段——片段之间可能有结构符号，合并会让句子错位。
 
@@ -387,7 +391,7 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | biblatex 论文参考文献整段消失、正文里是 `[smith2020]` | 只跑 bibtex，而 biblatex 的 `.bbl` 必须 biber 生成；且旧逻辑只在「首轮零错误」时才跑 | `pick_bib_tool()` 认 biblatex → 跑 biber；bib 步骤改到首轮编译之后**无条件**执行 |
 | TeX Live 下 minted 报 `You must invoke LaTeX with the -shell-escape flag` | MiKTeX 默认允许 write18，本机察觉不到，换机器就炸 | `_common.xetex_flags()` 扫到 minted/pythontex/svg 才加 `-shell-escape`（只对可信源码） |
 | `Listing 1:` 还是英文 | minted 浮动体用的是 `\listingscaption`，既不是 `\lstlistingname` 也不是 `\listingname` | 注入块三个名字都 renew |
-| IEEEtran 的 `Abstract—`、`Index Terms—` 不译 | 它们读 `\abstractname`、`\IEEEkeywordsname` | 注入块补 abstractname / IEEEkeywordsname / bibname / appendixname / proofname / algorithmcfname 等（都带 `\ifdefined` 兜底） |
+| IEEEtran 的 `Abstract—`、`Index Terms—` 不译 | 它们读 `\abstractname`、`\IEEEkeywordsname` | 注入块补 abstractname / IEEEkeywordsname / bibname / appendixname / proofname / algorithmcfname 等（带 `\ifdefined` 兜底）；`\contentsname` / `\refname` 改用 `\providecommand` + `\renewcommand`，兼容不定义这两个宏的文档类 |
 | 字体包写在 `\input{preamble}` 里时，A1 方案报上千条错 | 只扫主文件的 `\usepackage`，没发现 newtxmath，照样加 unicode-math | `detect_type1_tree()` 扫全部 tex/sty/cls；`strip_in_tree()` 连被 include 的文件一起摘 |
 | arXiv 包里 `00README.json` 写了主文件却不认 | 只匹配 `"main"` 这个键名，不认 arXiv 的 `usage: toplevel` | `readme_toplevel()` 解析 `sources[]`，取 `usage=toplevel` 的 filename |
 | PDF 分支报「找不到 pdf-formula-translate 技能」 | 旧版把外部技能目录当硬依赖，clone 仓库的人一定踩 | 仓库自带 `scripts/pdf_translate.py`，优先用它；外部技能只作退路 |
@@ -406,9 +410,13 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | 中文 PDF 的表格表头还是 `Static Cylinder` / `Static Rectangular` | `makecell` 不在可译命令表，`\makecell[c]{...}` 整个单元格被保护 | 把 `makecell` / `thead` 加进 `TEXT_COMMANDS`；可选参数 `[c]` 仍由 `opts_end` 保护。2607.15036 片段 297→303，`check_coverage` 清零 |
 | 一篇论文要十几轮翻译、每轮还要手写 Python 字典字面量 | 按「25 段」分批，实测单批源文 710～18,209 字符、差 25 倍；译文又得完整重打一遍 | `pending.py --budget 18000` 按字符切批（295 段 12 批→5 批，每批 1.3–1.8 万字符）；`submit.py` 直读 TSV/JSON、整批原子校验写入 |
 | 体检 100%、编译 0 错误却漏译，最后靠人眼翻 PDF 才发现 | `check_tr` 只比对 translations 与 segments，看不见「根本没被抽到的正文」 | 新增 `check_coverage.py`：用 segments 的 `[start,end]` 做位置差集；`check_tr` / `build` 同步接入并拦编译。修复前报 25 处 / 2018 字符，修复后 0 处 |
-| `sim-to-real` 被译成「仿真到真机」，只能事后写脚本全局替换 | `glossary.tsv` 只是给模型看的建议，提交时没有强制力 | 加第 4 列「禁用译法」，`submit.py` 当硬约束检查，违例整批拒绝 |
+| `sim-to-real` 译法五花八门 | 1.0.2 曾把第 4 列做成硬约束、违例整批拒绝，结果 `joint state` 这类按语境该换译名的也被迫迁就表内词条 | **1.0.4 起术语表统一降为参考**：`submit.py` 只提示不拦截，`audit.py` 低命中率只列为参考项；按论文语境判断优先 |
 | `audit` 报 `pose` 命中 18 次，逐条查几乎全是误报 | 术语正则只有尾部 `\b`，`pose` 命中了 pro**pose** / im**pose** / pur**pose** | `term_consistency()` 改用前后负向环视 `(?<![A-Za-z0-9])` / `(?![A-Za-z0-9])`。**不能补前置 `\b`**：中文属于 `\w`，「鲁棒的sim-to-real」里「的」与 `s` 之间没有词边界，会被整个漏掉。实测 `pose` 误报消失、`sim-to-real` 命中率 50%→100% |
 | 每篇都生成 47 MB 的单文件对照页 | `--single-file` 写进了示例命令，其实本机看目录版就够 | 示例去掉 `--single-file`、默认不生成；需要发给别人时才加。目录版的三档视图、搜索、划选、缩放一样不少 |
+| `ieeeconf.cls` 上注入字体后编译报 2 个错：`Command \contentsname undefined.` | 注入块里 `\contentsname` / `\refname` 是裸 `\renewcommand`，而这个类压根不定义这两个宏（同块其余十几个名字都带 `\ifdefined`） | 改成先 `\providecommand` 再 `\renewcommand`，类里有没有定义都安全；注入块的本地化说明同步改成与实现一致 |
+| `III. METHOD` / `IV. EXPERIMENTS` 整词大写标题留在中文 PDF 里，体检 100%、编译 0 错误 | `looks_like_prose()` 跳过单个全大写词（本是为过滤 PPO / GPU），`check_coverage` 的成片判据又要 ≥3 词，两边都看不见它 | `extract` 给 heading / caption / item 语境加 `allow_caps`（cell 仍过滤缩写）；`check_coverage` 单独认未覆盖区间里的 `\section{...}`，单词标题也报警 |
+| 图 1 / 表 I / 摘要 / 附录 / 参考文献标题仍是英文 | `CLASS_LOCALIZE` 只认 `\textbf{Abstract:}`，漏掉类文件里写死的 `\fnum@figure{Fig.~...}`、`\fnum@table{TABLE~...}`、`\textit{Abstract}---`、`Appendix`、`\section*{References}` | 补 7 条通用正则，覆盖 ieeeconf / IEEEtran 系；2603.09460 实测 9 处标签全中文，不再需要项目内人工补丁 |
+| `joint state` 被术语表逼着译成「关节状态」 | `glossary.tsv` 的 `joint→关节` 是从机器人本体论文里带过来的，在「联合状态表示」的语境下明显不对 | 术语表整体降为参考（见上），模型按语境译「联合状态」；`audit` 的低命中率不再标 ✗/⚠，避免把正确判断报成错误 |
 
 ### 分批翻译别用 offset
 
@@ -448,7 +456,7 @@ PY
 
 1. **源码层未译片段** —— 必须清零。有英文原文却提交了无中文译文，说明漏译。
 2. **整页无中文** —— 纯图页正常；若该页有正文说明字体失效。
-3. **术语异常** —— `✗` 是命中率低于 25%，通常是整段漏译或译名跑偏；`⚠` 是 25–60%，多为同义词混用。
+3. **术语表对照（参考，非错误）** —— 只列出译文与表内建议译法不同的条目，用 `·` 标记。术语表是建议，按论文语境换译名完全正常；真正的漏译由第 1 类「源码层未译片段」和 `check_tr` 的告警负责，不要拿术语命中率当验收标准。
 4. **英文成片（≥8 行/页）** —— 图注密集的页面会误报，看样本判断。
 
 `--png` 会把首页和可疑页导成图，供视觉核验排版（是否重影、表格是否溢出、图注是否被裁）。

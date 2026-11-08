@@ -13,7 +13,8 @@
 校验项（与 apply.py 完全同源，这里过了 apply 就一定过）：
   1. 段 id 存在、不重复、整批一次性原子写入（有错一段都不写，避免半批污染）
   2. ⟪Pnnnn⟫ 编号与数量一致、无反斜杠、无未闭合标记 —— 直接复用 apply.check_segment
-  3. glossary.tsv 第 4 列的「禁用译法」硬约束（如 sim-to-real 不许写「仿真到真机」）
+  3. glossary.tsv 第 4 列的「建议避开的译法」只提示、不拦截 —— 术语表是参考，
+     模型按论文语境判断别的译法更贴切时可以直接偏离
   4. 中文占比过低的段只提醒、不拦截（公式段与短标签本来就无汉字）
 
 用法：
@@ -39,10 +40,12 @@ GLOSSARY = SKILL_ROOT / "glossary.tsv"
 BUDGET_DEFAULT = 18000
 
 
-def banned_rows() -> list[tuple[str, str, list[str]]]:
-    """读 glossary.tsv 第 4 列（可选）：禁用译法，多个用 | 分隔。
+def advice_rows() -> list[tuple[str, str, list[str]]]:
+    """读 glossary.tsv 第 4 列（可选）：建议避开的写法，多个用 | 分隔。
 
-    返回 [(原文术语, 规定译名, [禁用写法, ...]), ...]。
+    术语表整体是**参考**，不是硬约束：模型按论文语境判断别的译法更贴切时
+    可以直接偏离。这里只把「命中建议避开写法」的段收集起来提示一句，
+    不拦截、不影响整批原子写入。返回 [(原文术语, 建议译名, [建议避开写法…]), ...]。
     老条目没有第 4 列时自动跳过，向后兼容。
     """
     out: list[tuple[str, str, list[str]]] = []
@@ -104,10 +107,10 @@ def main() -> int:
     if not batch:
         die("批次文件是空的")
 
-    banned = banned_rows()
+    advice = advice_rows()
     errors: list[tuple[str, str]] = []
     thin: list[str] = []
-    n_banned = 0
+    deviations: list[tuple[str, str]] = []
 
     for sid, text in batch.items():
         if sid not in segs:
@@ -117,12 +120,10 @@ def main() -> int:
         if err:
             errors.append((sid, err))
             continue
-        for en, zh, bads in banned:
+        for en, zh, bads in advice:
             for bad in bads:
                 if bad in text:
-                    errors.append((sid, f"术语硬约束：{en} 规定写作「{zh}」，"
-                                        f"译文出现禁用写法「{bad}」"))
-                    n_banned += 1
+                    deviations.append((sid, f"{en} 表内建议「{zh}」，出现写法「{bad}」"))
         bare = MARKER_RE.sub("", text)
         src_words = len(re.findall(r"[A-Za-z]{2,}", MARKER_RE.sub("", segs[sid]["masked"])))
         if src_words >= 8 and cjk_ratio(bare) < 0.08:
@@ -130,7 +131,11 @@ def main() -> int:
 
     print(f"\n[{root.name}] 提交 {len(batch)} 段（来源 {Path(args.batch).name}）")
     print(f"  校验失败      {len(errors)} 处" if errors else "  校验失败      0 处")
-    print(f"  其中术语违规  {n_banned} 处（硬约束表 {len(banned)} 条规则）")
+    print(f"  术语表偏离    {len(deviations)} 处（仅提示，不拦截；表内 {len(advice)} 条建议）")
+    for sid, why in deviations[:3]:
+        print(f"    · {sid:<26} {why}")
+    if deviations:
+        print("      术语表是参考：按论文语境判断更贴切时可直接保留该译法")
     print(f"  中文过少提醒  {len(thin)} 段" + (f"（如 {thin[0]}）" if thin else ""))
 
     if errors:

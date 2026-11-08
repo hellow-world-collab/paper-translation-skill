@@ -4,7 +4,7 @@
 四类检查：
   1. 中文是否真的铺满全文（分页统计，抓静默吞字）
   2. 残留英文段落（抓漏译）
-  3. 术语一致性（抓同一术语多种译法、该保留英文却被翻掉）
+  3. 术语表对照（只列参考信息，不判错：术语表是建议，按语境偏离属正常）
   4. 版面溢出（抓表格撞出版心）
 
 用法：
@@ -84,7 +84,12 @@ def page_cjk(pages: list[str]) -> list[dict]:
 
 
 def term_consistency(segments: list[dict], translations: dict) -> list[dict]:
-    """比较术语在原文与译文中的出现频次，发现漏译或译法漂移。"""
+    """对照术语表统计命中率，供人工抽查。
+
+    术语表只是建议：术语在不同论文语境下可以有更贴切的译法（例如 SEA-Nav 的
+    joint state 该译「联合状态」而不是表里的「关节」）。所以低命中率**不是错误**，
+    真漏译由 untranslated() / check_tr 负责，这里只输出参考信息。
+    """
     src = "\n".join(s["masked"] for s in segments)
     dst = "\n".join(translations.get(s["id"], "") for s in segments)
     rows = []
@@ -312,15 +317,16 @@ def main():
         for m in ct["latin_runs"][:5]:
             print(f"      {m['id']:<22} {m['words']} 词：{m['run'][:70]}")
 
-    # ③ 术语
+    # ③ 术语表对照（参考信息，不判错）
     terms = term_consistency(seg_data.get("segments", []), translations)
-    bad = [t for t in terms if t["status"] != "ok"]
-    print(f"\n  术语      检查 {len(terms)} 条，异常 {len(bad)} 条")
-    for t in sorted(bad, key=lambda x: x["ratio"])[:10]:
-        flag = "✗" if t["status"] == "bad" else "⚠"
-        arrow = "应保留英文" if t["mode"] == "keep" else f"应译作「{t['zh']}」"
-        print(f"      {flag} {t['en']:<26} 原文 {t['src']:>3} 次 / 命中 {t['dst']:>3}  "
+    low = [t for t in terms if t["status"] != "ok"]
+    print(f"\n  术语参考  对照 {len(terms)} 条，与表内建议不同 {len(low)} 条（非错误）")
+    for t in sorted(low, key=lambda x: x["ratio"])[:10]:
+        arrow = "表内标记保留英文" if t["mode"] == "keep" else f"表内建议「{t['zh']}」"
+        print(f"      · {t['en']:<26} 原文 {t['src']:>3} 次 / 命中 {t['dst']:>3}  "
               f"({t['ratio']:.0%})  {arrow}")
+    if low:
+        print("      术语表只是参考，按论文语境换译名属正常；真漏译看上面的未译片段告警")
 
     uncovered = missing_terms(seg_data.get("segments", []), load_glossary())
     if uncovered:
@@ -366,10 +372,11 @@ def main():
         md.append(f"## 源码层未译片段（{len(miss)} 条）")
         md += [f"- `{m['id']}` {m['masked'][:70]}" for m in miss[:20]]
         md.append("")
-    if bad:
-        md.append(f"## 术语异常（{len(bad)} 条）")
+    if low:
+        md.append(f"## 术语表对照（{len(low)} 条，仅供参考、非错误）")
+        md.append("术语表是建议；按论文语境换译名属正常，真漏译见上面的未译片段。")
         md += [f"- {t['en']} → {t['zh']}：原文 {t['src']}，命中 {t['dst']}（{t['ratio']:.0%}）"
-               for t in sorted(bad, key=lambda x: x["ratio"])[:20]]
+               for t in sorted(low, key=lambda x: x["ratio"])[:20]]
         md.append("")
     write_text(arz / "audit.md", "\n".join(md))
 

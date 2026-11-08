@@ -177,8 +177,11 @@ def build_injection(text: str, recipe: dict,
     # 模板固定标题本地化。必须延后到 babel 的 \selectlanguage 之后，
     # 否则会被 babel 的语言定义覆盖回 Contents / References。
     lines.append("\\AtBeginDocument{")
-    lines.append("  \\renewcommand{\\contentsname}{目录}")
-    lines.append("  \\renewcommand{\\refname}{参考文献}")
+    # 并非所有文档类都定义 \contentsname / \refname（ieeeconf.cls 就没有），
+    # 裸 \renewcommand 会报 "LaTeX Error: Command \contentsname undefined."。
+    # 先 provide 再 renew：类里有没有定义都安全，且最终一定是中文。
+    lines.append("  \\providecommand{\\contentsname}{目录}\\renewcommand{\\contentsname}{目录}")
+    lines.append("  \\providecommand{\\refname}{参考文献}\\renewcommand{\\refname}{参考文献}")
     # 摘要标题：article 系列与 IEEEtran 都读 \abstractname，只有它不译会出现
     # 「Abstract— 中文摘要」这种半中半英
     lines.append("  \\ifdefined\\abstractname\\renewcommand{\\abstractname}{摘要}\\fi")
@@ -255,11 +258,28 @@ CLASS_LOCALIZE = [
     (re.compile(r"(tablename\s*=\s*)\{?Table\}?"), r"\1表"),
     (re.compile(r"\\renewcommand\{\\figurename\}\{Figure\}"), r"\\renewcommand{\\figurename}{图}"),
     (re.compile(r"\\renewcommand\{\\tablename\}\{Table\}"), r"\\renewcommand{\\tablename}{表}"),
+    # ── 文档类里写死的结构标签（ieeeconf / IEEEtran 系，2603.09460 实测）──
+    # 题注编号前缀由 \fnum@figure / \fnum@table 直接排版，改 \figurename 压不住；
+    # 写完 caption 后才套用，所以只能改类文件本身。
+    (re.compile(r"(\\def\\fnum@figure\{)Fig(?:ure)?\.?~?(\\thefigure)"), r"\1图~\2"),
+    (re.compile(r"(\\def\\fnum@table\{)(?:TABLE|Table)~?(\\thetable)", re.I), r"\1表~\2"),
+    # 摘要标签：\bfseries\textit{Abstract}---（不带冒号，也不走 \abstractname）
+    (re.compile(r"(\\(?:textit|textbf)\{)Abstract(\})"), r"\1摘要\2"),
+    # 附录标题：\@IEEEappendixsavesection*{Appendix \* #1} 与目录条目
+    (re.compile(r"(\\@IEEEappendixsavesection\*\{)Appendix(?=\s|\\|\})"), r"\1附录"),
+    (re.compile(r"(\\addcontentsline\{toc\}\{section\}\{)Appendix(?=[:}])"), r"\1附录"),
+    # 参考文献标题：\def\thebibliography#1{\section*{References} 与目录条目
+    (re.compile(r"(\\section\*\{)(?:References|REFERENCES)(\})"), r"\1参考文献\2"),
+    (re.compile(r"(\\addcontentsline\{toc\}\{section\}\{)(?:References|REFERENCES)(\})"),
+     r"\1参考文献\2"),
 ]
 
 
 def localize_class_files(root: Path) -> list[str]:
-    """把 cls/sty 中硬编码的 Abstract 标题换成中文，返回改过的文件。"""
+    """把 cls/sty 中硬编码的结构标签（摘要/图表前缀/附录/文献标题）换成中文。
+
+    返回改过的文件；逐条 sub 天然幂等，重复跑不会再改。
+    """
     touched = []
     for f in list(root.rglob("*.cls")) + list(root.rglob("*.sty")):
         text = read_text(f)

@@ -529,13 +529,18 @@ def _has_words(s: str) -> bool:
 SHORT_WORDS = {"no", "yes", "on", "off"}
 
 
-def looks_like_prose(text: str, min_words: int = 2) -> bool:
+def looks_like_prose(text: str, min_words: int = 2,
+                     allow_caps: bool = False) -> bool:
     r"""判断一段文本是否值得翻译。
 
     正文要求「至少两个英文词」，避免把符号、编号、缩写送去翻译；但题注、表格单元格、
     \item 术语常常只有一个词（Ours / Walk / Simulation.），这些位置 min_words 传 1，
-    单个人名化的普通单词（首字母大写或全小写、至少 3 个字母）也算可译，
-    全大写缩写（PPO / GPU）仍然跳过。
+    单个人名化的普通单词（首字母大写或全小写、至少 3 个字母）也算可译。
+
+    全大写缩写（PPO / GPU）默认跳过，但 IEEE 系模板的章节标题恰恰是整词大写
+    （\section{METHOD} / \section{EXPERIMENTS}）：把这类标题丢掉，中文 PDF 里就会
+    留着「III. METHOD」。因此 heading / caption / item 语境由调用方传 allow_caps=True，
+    表格单元格（cell）仍保持过滤 RVO / PPO 之类缩写。
     """
     stripped = re.sub(r"\s+", " ", text).strip()
     if len(stripped) < 2:
@@ -551,8 +556,10 @@ def looks_like_prose(text: str, min_words: int = 2) -> bool:
         return True
     if len(words) == 1:
         w = words[0]
+        if w.isupper() and not allow_caps:
+            return False
         # 表格里的开关值常常只有两个字母（no / on），也要译
-        return (len(w) >= 3 or w.lower() in SHORT_WORDS) and not w.isupper()
+        return len(w) >= 3 or w.lower() in SHORT_WORDS
     return False
 
 
@@ -587,7 +594,10 @@ def group_segments(tokens: list[Token], text: str, rel: str,
         heading = bool(HEADING_RE.match(source)) and _has_words(source)
         min_words = 1 if (heading or after_item
                           or ctx in ("heading", "caption", "cell", "item")) else 2
-        if not looks_like_prose(source, min_words):
+        # 整词大写的章节标题（METHOD / EXPERIMENTS）要收；表格单元格里的
+        # PPO / RVO 之类缩写仍按原规则跳过，所以不给 cell 开这个口子。
+        allow_caps = heading or ctx in ("heading", "caption", "item")
+        if not looks_like_prose(source, min_words, allow_caps):
             buf = []
             return
 
@@ -617,7 +627,7 @@ def group_segments(tokens: list[Token], text: str, rel: str,
 
         # 全部是标记、没有实际词的段落没有翻译价值
         core = MARKER_RE.sub("", masked)
-        if not looks_like_prose(core, min_words):
+        if not looks_like_prose(core, min_words, allow_caps):
             buf = []
             return
 

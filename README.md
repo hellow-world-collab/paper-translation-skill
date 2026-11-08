@@ -198,7 +198,7 @@ python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
 
 ```
 SKILL.md                 技能主文档（流程、命令、踩坑表）
-glossary.tsv             术语表：先到先得的译名锁定
+glossary.tsv             术语表：建议译名（可按论文语境偏离，不是硬约束）
 scripts/
   route.py               第零步：判断 LaTeX / PDF 分支
   fetch.py               取源码（e-print）、认主文件 → manifest.json
@@ -208,7 +208,7 @@ scripts/
   apply.py               回填译文 → 新的 .tex
   check_coverage.py      翻译前的抽取覆盖率检查（找出没进 segments 的英文正文）
   check_tr.py            译文体检（缺译 / 中文过少 / 成片英文 / 未抽取正文）
-  submit.py              批量提交译文（TSV / JSON、原子写入、术语硬约束）
+  submit.py              批量提交译文（TSV / JSON、原子写入、术语表建议仅提示）
   build.py               编译（内部先跑 check_tr，交叉引用收敛即停）
   audit.py               产物审计（页数、中文覆盖率、图表数量、参考文献）
   render_html.py         段落级重排网页（旧版，可选）
@@ -305,6 +305,7 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 | 2509.09674 *SimpleVLA-RL* | LaTeX | 24 页原文 → 21 页中文，5 图 / 7 表 / 1 代码框全部在位；题注前缀全文无英文残留 |
 | 2509.09674 | PDF（pdf2zh） | 版式、图、公式原位，正文全中文 |
 | 2508.08241 *BeyondMimic* | LaTeX | Science 模板（`sciencemag.bst` + 11 张图）：字体注入复跑 A1 / 0 错误 / 59 页；项目里另有早前产出的 54 页中文版 |
+| 2603.09460v2 *SEA-Nav* | LaTeX | ieeeconf 双栏：8 页原文 → 7 页中文，0 错误 / 0 溢出；图 1、表 I–V、摘要、附录、参考文献标题全中文；双栏对照页经 Chrome CDP 真实验收 |
 
 ## 已知限制
 
@@ -319,7 +320,8 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 - **个别符号缺字**：中文字体里没有的字符（①②、特殊箭头、emoji）会触发
   `Missing character`，PDF 里是空白。编译日志会报条数，`inject_cjk` 也会提示。
 - **模板把标题写死在类文件里**：`\renewcommand` 压不住，只能加规则到
-  `inject_cjk.CLASS_LOCALIZE`（已覆盖 thuc3i / babel / caption 那几种常见写法）。
+  `inject_cjk.CLASS_LOCALIZE`（已覆盖 thuc3i / babel / caption / ieeeconf 的
+  摘要、图表前缀、附录、参考文献标题等常见写法）。
 - **PDF 分支字体**：`pdf2zh` 默认去 HF 拉 Noto CJK，国内会失败；脚本自动改指本机中文字体
   并把 `HF_ENDPOINT` 指到镜像。
 - **Type1 字体包**：`newtxtext`/`txfonts` 等在 XeLaTeX 下会让中文**静默消失**

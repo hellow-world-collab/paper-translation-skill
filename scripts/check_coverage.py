@@ -8,8 +8,9 @@
 
 做法：segments.json 记录了每段在 zh/ 源 tex 里的 [start, end] 偏移。
 把源文减去这些区间的并集，剩下的就是「抽取器跳过的部分」；在这些区间里
-剥掉命令、公式、注释、标签与图片路径，凡还留下成片英文（≥4 词 / ≥25 字符），
-就是可疑漏译。位置差集比「拿字符串去 segments 里搜」可靠得多，也能直接给行号。
+剥掉命令、公式、注释、标签与图片路径，凡还留下成片英文（≥3 词 / ≥20 字符，
+表格内 2 词 / 8 字符），或出现没被抽走的 \\section{...} 章节标题，就是可疑漏译。
+位置差集比「拿字符串去 segments 里搜」可靠得多，也能直接给行号。
 
 用法：
     python check_coverage.py <项目目录>                 # 报告；有可疑漏译退出码 1
@@ -67,6 +68,17 @@ TABLE_BLOCK = re.compile(
     r"\\begin\s*\{(?:tabular\*?|tabularx|tabulary|longtable\*?|supertabular|"
     r"xtabular|xltabular|tblr)\}.*?\\end\s*\{[^}]+\}", re.S)
 EN_WORD = re.compile(r"[A-Za-z]{2,}")
+
+# 章节标题是「一个词」也绝对不能漏（\section{METHOD} / \section{EXPERIMENTS}）。
+# 上面的 RUN 要 ≥3 个英文词，单词标题永远报不出来，只能单独认命令参数。
+# 2603.09460 实测：这两个全大写标题没进 segments，体检 100%、编译 0 错误，
+# 最后靠人眼翻 PDF 才发现「III. METHOD」还是英文。
+HEADING_ARG = re.compile(
+    r"(?:\\(?:sub)*section|\\chapter|\\part|\\paragraph|\\subparagraph)\*?"
+    r"\s*(?:\[[^\]]*\])?\s*\{([^{}]{1,120})\}")
+# 标题里只有命令（\section{\label{sec:x}}）时不是正文，别误报
+HEADING_JUNK = re.compile(
+    r"\\(?:ref|eqref|label|cite|citep|citet|includegraphics|input|autoref|cref)\b")
 
 # 代码类环境整块不查（里面本来就允许大段英文）
 CODE_ENVS = ("verbatim", "lstlisting", "minted", "filecontents", "comment",
@@ -173,10 +185,20 @@ def scan(root: Path, min_chars: int = 20) -> dict:
     for s in data["segments"]:
         by_file.setdefault(s["file"], []).append(s)
 
+    # 一个片段都没抽到的 .tex 文件不会出现在 by_file，只按 by_file 遍历的话，
+    # 整文件漏抽时连查都不会查它（\section{METHOD} 那次就踩了这个盲区）。
+    # 这类文件只做结构性标题检查，不套「成片英文」判据，免得公式与宏定义误报。
+    zh = root / "zh"
+    zero_files = sorted(
+        p.relative_to(zh).as_posix() for p in zh.rglob("*")
+        if p.is_file() and p.suffix.lower() in {".tex", ".ltx"}
+        and p.relative_to(zh).as_posix() not in by_file)
+
     findings: list[dict] = []
     total_uncovered = 0
     covered_chars = 0
-    for rel, segs in sorted(by_file.items()):
+    for rel in sorted(set(by_file) | set(zero_files)):
+        segs = by_file.get(rel, [])
         path = root / "zh" / rel
         if not path.is_file():
             continue
@@ -192,6 +214,18 @@ def scan(root: Path, min_chars: int = 20) -> dict:
         for a, b in spans:
             chunk = text[a:b]
             total_uncovered += len(chunk)
+            # 章节标题单独查：单个词（尤其整词大写）永远达不到成片判据，
+            # 但漏掉它就是中文 PDF 里一个刺眼的英文大标题。
+            for hm in HEADING_ARG.finditer(chunk):
+                title = " ".join(hm.group(1).split())
+                if not re.search(r"[A-Za-z]{3,}", title) or HEADING_JUNK.search(title):
+                    continue
+                hline = text.count("\n", 0, a + hm.start(1)) + 1
+                findings.append({"file": rel, "line": hline, "chars": len(title),
+                                 "text": title[:160], "kind": "heading"})
+            if not segs:
+                # 整文件零片段：只报结构性标题，别拿公式/宏定义里的英文碎片凑数
+                continue
             cleaned = strip_tex(chunk)
             in_table = any(a < e and b > st for st, e in table_ranges)
             pat = TABLE_RUN if in_table else RUN
