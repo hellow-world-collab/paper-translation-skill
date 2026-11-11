@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.4
+version: 1.0.5
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -417,6 +417,8 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | `III. METHOD` / `IV. EXPERIMENTS` 整词大写标题留在中文 PDF 里，体检 100%、编译 0 错误 | `looks_like_prose()` 跳过单个全大写词（本是为过滤 PPO / GPU），`check_coverage` 的成片判据又要 ≥3 词，两边都看不见它 | `extract` 给 heading / caption / item 语境加 `allow_caps`（cell 仍过滤缩写）；`check_coverage` 单独认未覆盖区间里的 `\section{...}`，单词标题也报警 |
 | 图 1 / 表 I / 摘要 / 附录 / 参考文献标题仍是英文 | `CLASS_LOCALIZE` 只认 `\textbf{Abstract:}`，漏掉类文件里写死的 `\fnum@figure{Fig.~...}`、`\fnum@table{TABLE~...}`、`\textit{Abstract}---`、`Appendix`、`\section*{References}` | 补 7 条通用正则，覆盖 ieeeconf / IEEEtran 系；2603.09460 实测 9 处标签全中文，不再需要项目内人工补丁 |
 | `joint state` 被术语表逼着译成「关节状态」 | `glossary.tsv` 的 `joint→关节` 是从机器人本体论文里带过来的，在「联合状态表示」的语境下明显不对 | 术语表整体降为参考（见上），模型按语境译「联合状态」；`audit` 的低命中率不再标 ✗/⚠，避免把正确判断报成错误 |
+| `check_coverage` 在 2611.11605 上报 6 处「漏译」，其实一处都不是 | 被作者注释掉的 `% \section{Limitations and Future Work}`、`\author{...}` 里按惯例保留的人名与机构、以及 `\begin{tabular}{lcc ccccc cccc}` 的列格式参数 | 标题匹配前先按等长空格抹掉注释；`author` / `IEEEauthorblockN/A` 加进 `NONPROSE_CMDS` 连嵌套参数一起抹；`TABULAR_SPEC` 吃掉紧跟环境名的列格式参数。修后 6 处 → 0 处，真标题 `\section{METHOD}` 仍报警 |
+| 消融表里的 17 个 ✓ 全是空白，编译却 0 错误 | 摘掉 `amssymb` 后 `\checkmark` 由 unicode-math 定义成字符 U+2713，拉丁字体没有该字形；注入块想用 `\ding{51}` 替换，但外层 `\ifdefined\ding` 恒为假——**pifont 从来没被加载** | 导言区加 `\IfFileExists{pifont.sty}{\usepackage{pifont}}{}`（同名包重复加载安全、缺包不报错），`AtBeginDocument` 里的重定义才真正生效。2611.11605 实测 Missing character 17 → 0 |
 
 ### 分批翻译别用 offset
 

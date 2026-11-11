@@ -174,6 +174,11 @@ def build_injection(text: str, recipe: dict,
     lines.append(f"\\setCJKsansfont{fake}{{{stack['sans']}}}")
     lines.append(f"\\setCJKmonofont{{{stack['mono']}}}")
     lines.append("\\xeCJKsetup{CJKspace=true}")
+    # 摘掉 amssymb 后 \checkmark 由 unicode-math 定义成字符 ✓，而拉丁字体没有
+    # U+2713，表格里对勾会静默变成空白。AtBeginDocument 里的重定义要借 pifont 的
+    # \ding{51}，但旧版从没加载 pifont，\ifdefined\ding 恒为假，那段是死代码。
+    # 这里条件加载一次：同名包重复 \usepackage 是安全的，缺包时也不报错。
+    lines.append("\\IfFileExists{pifont.sty}{\\usepackage{pifont}}{}")
     # 模板固定标题本地化。必须延后到 babel 的 \selectlanguage 之后，
     # 否则会被 babel 的语言定义覆盖回 Contents / References。
     lines.append("\\AtBeginDocument{")
@@ -211,7 +216,7 @@ def build_injection(text: str, recipe: dict,
     lines.append("  \\ifdefined\\algorithmname\\renewcommand{\\algorithmname}{算法}\\fi")
     # amssymb 被摘掉后 \checkmark 由 unicode-math 在 \begin{document} 时才定义成
     # “字符 ✓”，而拉丁字体没有 U+2713 —— 编译不报错、表格里却是一格空白。
-    # 装了 pifont 就借它的 Zapf Dingbats 出勾叉；这段必须放在 AtBeginDocument 里，
+    # 借上方加载的 pifont 的 Zapf Dingbats 出勾叉；这段必须放在 AtBeginDocument 里，
     # 因为导言区此时 \checkmark 还没定义（实测 \ifdefined 为假）。
     lines.append("  \\ifdefined\\ding")
     lines.append("    \\ifdefined\\checkmark\\renewcommand{\\checkmark}{\\ding{51}}\\fi")

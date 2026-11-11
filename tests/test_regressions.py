@@ -107,6 +107,8 @@ check("\\providecommand 兜底两行",
       and "providecommand{\\refname}{参考文献}\\renewcommand" in norm)
 check("不再有裸 \\renewcommand{\\contentsname}",
       'lines.append("  \\\\renewcommand{\\\\contentsname}{目录}")' not in src)
+check("pifont 被条件加载（表格对勾不再是死代码）",
+      "IfFileExists{pifont.sty}" in norm)
 check("术语建议行可读", len(advice_rows()) >= 1,
       f"{len(advice_rows())} 条")
 
@@ -126,6 +128,35 @@ out = (p.stdout or "") + (p.stderr or "")
 check("术语偏离不拦截（dry-run 返回 0）", p.returncode == 0,
       out.strip().splitlines()[-1] if out.strip() else "")
 check("输出标明仅提示不拦截", "仅提示，不拦截" in out)
+
+print("\n⑤ 2611.11605 实战：覆盖率检查的三类误报")
+fake = (
+    "\\documentclass{article}\n\\begin{document}\n"
+    "Intro paragraph with several English words for the extractor to cover.\n"
+    "\\author{%\n"
+    "\\IEEEauthorblockN{Yunyi Gao, Yixing Shi, and Sameer Alam}\n"
+    "\\IEEEauthorblockA{School of Artificial Intelligence and Robotics, "
+    "Xiamen University Malaysia}\n"
+    "}\n"
+    "% \\section{Limitations and Future Work}\n"
+    "\\begin{tabular}{lcc ccccc cccc}\n\\toprule\n\\end{tabular}\n"
+    "\\section{METHOD}\n\\end{document}\n")
+d5 = Path(tempfile.mkdtemp(prefix="arz105-proj-"))
+(d5 / "zh").mkdir()
+(d5 / ".arz").mkdir()
+(d5 / "zh" / "x.tex").write_text(fake, encoding="utf-8")
+a5 = fake.index("Intro paragraph")
+b5 = fake.index("\n", a5)
+(d5 / ".arz" / "segments.json").write_text(json.dumps({"segments": [{
+    "id": "x.tex#0001", "file": "x.tex", "start": a5, "end": b5,
+    "source": fake[a5:b5], "masked": fake[a5:b5], "protected": [],
+}]}, ensure_ascii=False), encoding="utf-8")
+t5 = " | ".join(f["text"] for f in scan(d5)["suspects"])
+check("注释掉的 section 不再误报", "Limitations" not in t5, t5[:90])
+check("author 人名与机构不再误报",
+      "Yunyi Gao" not in t5 and "Xiamen University" not in t5, t5[:90])
+check("tabular 列格式不再误报", "lcc ccccc" not in t5, t5[:90])
+check("真标题 METHOD 仍能报出", "METHOD" in t5, t5[:90])
 
 print("\n" + ("全部通过" if all(RESULTS) else f"{RESULTS.count(False)} 项失败"),
       f"({sum(RESULTS)}/{len(RESULTS)})")

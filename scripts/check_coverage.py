@@ -49,6 +49,10 @@ NONPROSE_CMDS = {
     "textcolor", "definecolor", "pagestyle", "thispagestyle", "setcounter",
     "addtocounter", "counterwithin", "geometry", "phantom", "vphantom",
     "hphantom", "cline", "cmidrule", "multirow", "multicolumn",
+    # 作者/单位块按惯例保留英文（人名、校名、邮箱），2611.11605 实测
+    # \author{\IEEEauthorblockN{...}\IEEEauthorblockA{...}} 会被当成
+    # 3 处「成片英文」误报；整块连带嵌套参数一起抹掉。
+    "author", "IEEEauthorblockN", "IEEEauthorblockA", "and", "thanks",
 }
 # 无参声明命令（noindent / centering / 字号 / hfill …）绝不能进 NONPROSE_CMDS：
 # 它们后面的 {..} 是正文而不是参数。旧版 extract.py 就是这么把
@@ -67,6 +71,12 @@ TABLE_RUN = re.compile(
 TABLE_BLOCK = re.compile(
     r"\\begin\s*\{(?:tabular\*?|tabularx|tabulary|longtable\*?|supertabular|"
     r"xtabular|xltabular|tblr)\}.*?\\end\s*\{[^}]+\}", re.S)
+# 表格的列格式参数（{lcc ccccc cccc}）不是自然语言，但表格区内用的是
+# 2 词 / 8 字符的低阈值，会被当成「表头漏译」。2611.11605 实测误报 2 处。
+# 只吃掉紧跟环境名的若干个 {} / [] 参数，不动表格单元格。
+TABULAR_SPEC = re.compile(
+    r"\\begin\s*\{(?:tabular\*?|tabularx|tabulary|longtable\*?|supertabular|"
+    r"xtabular|xltabular|tblr)\}\s*(?:\{[^{}]*\}|\[[^\]]*\]|\s)*")
 EN_WORD = re.compile(r"[A-Za-z]{2,}")
 
 # 章节标题是「一个词」也绝对不能漏（\section{METHOD} / \section{EXPERIMENTS}）。
@@ -124,6 +134,7 @@ def strip_tex(chunk: str) -> str:
     """把 chunk 里的命令名、非正文参数、公式、注释去掉，只留可能印到纸上的文字。"""
     s = COMMENT.sub(" ", chunk)
     s = CODE_BLOCK.sub(" ", s)
+    s = TABULAR_SPEC.sub(" ", s)
     for pat in MATH_PAIRS:
         s = pat.sub(" ", s)
 
@@ -216,7 +227,11 @@ def scan(root: Path, min_chars: int = 20) -> dict:
             total_uncovered += len(chunk)
             # 章节标题单独查：单个词（尤其整词大写）永远达不到成片判据，
             # 但漏掉它就是中文 PDF 里一个刺眼的英文大标题。
-            for hm in HEADING_ARG.finditer(chunk):
+            # 注释里被作者注释掉的 \section{...} 并不印到纸上，先按等长空格抹掉
+            # 注释再匹配，偏移不变、行号仍准。2611.11605 的
+            # 「% \section{Limitations and Future Work}」实测误报 1 处。
+            heading_src = COMMENT.sub(lambda m: " " * len(m.group(0)), chunk)
+            for hm in HEADING_ARG.finditer(heading_src):
                 title = " ".join(hm.group(1).split())
                 if not re.search(r"[A-Za-z]{3,}", title) or HEADING_JUNK.search(title):
                     continue
