@@ -53,6 +53,10 @@ NONPROSE_CMDS = {
     # \author{\IEEEauthorblockN{...}\IEEEauthorblockA{...}} 会被当成
     # 3 处「成片英文」误报；整块连带嵌套参数一起抹掉。
     "author", "IEEEauthorblockN", "IEEEauthorblockA", "and", "thanks",
+    # hyperref 的 PDF 元数据（pdftitle / pdfauthor / pdfkeywords …）只进
+    # 文档属性，不印到纸上；2610.31617 的 pdftitle 与 \title{} 同文，
+    # 未覆盖区间里会被当成「标题漏译」报 1 处，直接卡住 build.py。
+    "hypersetup",
 }
 # 无参声明命令（noindent / centering / 字号 / hfill …）绝不能进 NONPROSE_CMDS：
 # 它们后面的 {..} 是正文而不是参数。旧版 extract.py 就是这么把

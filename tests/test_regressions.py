@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from check_coverage import scan                     # noqa: E402
 from extract import extract_file, looks_like_prose  # noqa: E402
-from inject_cjk import CLASS_LOCALIZE               # noqa: E402
+from inject_cjk import CLASS_LOCALIZE, resolve_inject_target  # noqa: E402
 from submit import advice_rows                     # noqa: E402
 
 RESULTS: list[bool] = []
@@ -109,6 +109,8 @@ check("不再有裸 \\renewcommand{\\contentsname}",
       'lines.append("  \\\\renewcommand{\\\\contentsname}{目录}")' not in src)
 check("pifont 被条件加载（表格对勾不再是死代码）",
       "IfFileExists{pifont.sty}" in norm)
+check("unicode-math 以 mathbf=sym 加载（修 \\mathbf{\\Omega} 空白）",
+      "usepackage[mathbf=sym]{unicode-math}" in norm)
 check("术语建议行可读", len(advice_rows()) >= 1,
       f"{len(advice_rows())} 条")
 
@@ -157,6 +159,42 @@ check("author 人名与机构不再误报",
       "Yunyi Gao" not in t5 and "Xiamen University" not in t5, t5[:90])
 check("tabular 列格式不再误报", "lcc ccccc" not in t5, t5[:90])
 check("真标题 METHOD 仍能报出", "METHOD" in t5, t5[:90])
+
+print("\n⑥ 2610.31617 实战：纯 \\input 兼容壳与 hyperref 元数据")
+d6 = Path(tempfile.mkdtemp(prefix="arz106-proj-"))
+(d6 / "src").mkdir()
+(d6 / "src" / "main_highlighted.tex").write_text(
+    "% !TeX root = main_highlighted.tex\n\\input{main.tex}\n", encoding="utf-8")
+(d6 / "src" / "main.tex").write_text(
+    "\\documentclass{IEEEtran}\n\\begin{document}\nHello world.\n\\end{document}\n",
+    encoding="utf-8")
+target, note = resolve_inject_target(d6 / "src", "main_highlighted.tex")
+check("纯 \\input 壳解析出真正主文件", target == "main.tex", str(target))
+check("普通主文件仍返回自身、无提示",
+      resolve_inject_target(d6 / "src", "main.tex") == ("main.tex", None))
+check("解析结果说明编译入口不变", bool(note) and "编译入口不变" in note, str(note))
+
+fake6 = (
+    "\\documentclass{article}\n"
+    "\\hypersetup{pdfauthor={}, pdftitle={DiffDreamer: Coupling World Models "
+    "with Differentiable Simulation for Agile Quadrotor Control}}\n"
+    "\\begin{document}\n"
+    "Intro paragraph with several English words for the extractor to cover.\n"
+    "This sentence is definitely untranslated prose left behind on purpose.\n"
+    "\\end{document}\n")
+d6b = Path(tempfile.mkdtemp(prefix="arz106-cov-"))
+(d6b / "zh").mkdir()
+(d6b / ".arz").mkdir()
+(d6b / "zh" / "x.tex").write_text(fake6, encoding="utf-8")
+a6 = fake6.index("Intro paragraph")
+b6 = fake6.index("\n", a6)
+(d6b / ".arz" / "segments.json").write_text(json.dumps({"segments": [{
+    "id": "x.tex#0001", "file": "x.tex", "start": a6, "end": b6,
+    "source": fake6[a6:b6], "masked": fake6[a6:b6], "protected": [],
+}]}, ensure_ascii=False), encoding="utf-8")
+t6 = " | ".join(f["text"] for f in scan(d6b)["suspects"])
+check("pdftitle 元数据不再误报", "Coupling World Models" not in t6, t6[:110])
+check("真正未覆盖的正文仍能报出", "definitely untranslated" in t6, t6[:140])
 
 print("\n" + ("全部通过" if all(RESULTS) else f"{RESULTS.count(False)} 项失败"),
       f"({sum(RESULTS)}/{len(RESULTS)})")

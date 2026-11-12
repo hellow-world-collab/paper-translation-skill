@@ -144,7 +144,12 @@ def build_injection(text: str, recipe: dict,
             lines.append("\\setmonofont{TeX Gyre Cursor}")
         if recipe["math"] == "unicode":
             if not re.search(r"\\usepackage(\[[^\]]*\])?\{unicode-math\}", text):
-                lines.append("\\usepackage{unicode-math}")
+                # mathbf=sym：默认 unicode-math 让 \mathbf 落到拉丁文本字体，
+                # \mathbf{\Omega} 会被解析成 U+1D6EA（数学粗体 Omega），
+                # lmroman10-bold 没有该字形 → 编译 0 错误但公式里一片空白。
+                # 2610.31617 实测 11 处。官方选项让 \mathbf 走 \symbf 的数学
+                # 字母表，字形由 TeX Gyre Termes Math 提供；不动源码一个字符。
+                lines.append("\\usepackage[mathbf=sym]{unicode-math}")
                 lines.append("\\setmathfont{TeX Gyre Termes Math}")
                 # unicode-math 与 amssymb 家族互斥，必须摘掉
                 body2, gone2 = strip_packages(
@@ -297,6 +302,49 @@ def localize_class_files(root: Path) -> list[str]:
     return touched
 
 
+INPUT_FILE_RE = re.compile(r"\\(?:input|include)\s*\{([^}]+)\}")
+DOC_BEGIN_RE = re.compile(r"\\begin\s*\{document\}")
+
+
+def resolve_inject_target(src: Path, main: str) -> tuple[str, str | None]:
+    r"""找出真正承载 \begin{document} 的文件，作为字体注入的目标。
+
+    arXiv 有些投稿把「兼容入口」标成 00README 的 toplevel，例如
+    main_highlighted.tex 只有一行 \input{main.tex}，导言区与 \begin{document}
+    都在被 input 的文件里（2610.31617 实测）。注入块必须落在真正导言区的末尾，
+    否则 apply_injection 找不到 \begin{document} 直接报错；但编译入口仍应是
+    toplevel —— build.py / audit.py 都按 manifest.main 算产物 PDF 名。
+    所以这里只改「注入目标」，不动 manifest.main。
+    """
+    seen: set[str] = set()
+    queue: list[str] = [main]
+    while queue:
+        rel = queue.pop(0)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        f = src / rel
+        if not f.is_file():
+            continue
+        text = read_text(f)
+        if DOC_BEGIN_RE.search(text):
+            note = None if rel == main else (
+                f"主文件 {main} 是纯 \\input 兼容壳，字体注入改写到 {rel}（编译入口不变）"
+            )
+            return rel, note
+        for m in INPUT_FILE_RE.finditer(text):
+            name = m.group(1).strip()
+            if not name.endswith(".tex"):
+                name += ".tex"
+            if (src / name).is_file():
+                queue.append(name)
+            else:
+                cand = str(Path(rel).parent / name)
+                if (src / cand).is_file():
+                    queue.append(cand)
+    return main, None
+
+
 def apply_injection(text: str, recipe: dict, probe: bool,
                     found_type1: list[str] | None = None) -> tuple[str, list[str], list[str]]:
     block, removed, notes = build_injection(text, recipe, found_type1)
@@ -322,14 +370,20 @@ def apply_injection(text: str, recipe: dict, probe: bool,
 
 
 def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
-               tree_type1: list[str] | None = None) -> dict:
-    """在一份临时副本里注入并编译，用哨兵文本判断中文是否真的输出。"""
+               tree_type1: list[str] | None = None,
+               inject_target: str | None = None) -> dict:
+    """在一份临时副本里注入并编译，用哨兵文本判断中文是否真的输出。
+
+    main 是编译入口（产物 PDF 名按它算），inject_target 是注入块真正落地的
+    文件；两者只有「toplevel 是纯 \\input 兼容壳」时才不同。
+    """
     work = root / (".probe-" + rid)
     if work.exists():
         shutil.rmtree(work)
     shutil.copytree(src, work)
 
-    main_path = work / main
+    target = inject_target or main
+    main_path = work / target
     original = read_text(main_path)
     injected, removed, notes = apply_injection(
         original, RECIPES[rid], probe=True, found_type1=tree_type1
@@ -387,10 +441,10 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
             shutil.rmtree(zh)
         shutil.copytree(src, zh)
         clean, removed_zh, _ = apply_injection(
-            read_text(zh / main), RECIPES[rid], probe=False, found_type1=tree_type1
+            read_text(zh / target), RECIPES[rid], probe=False, found_type1=tree_type1
         )
-        write_text(zh / main, clean)
-        strip_in_tree(zh, zh / main, set(removed_zh))
+        write_text(zh / target, clean)
+        strip_in_tree(zh, zh / target, set(removed_zh))
         for name in localize_class_files(zh):
             ok(f"类文件固定标题已本地化：{name}")
         for _ in range(2):
@@ -423,7 +477,11 @@ def main():
 
     src = root / manifest["src"]
     main_file = manifest["main"]
-    main_text = read_text(src / main_file)
+    inject_target, shell_note = resolve_inject_target(src, main_file)
+    if shell_note:
+        ok(shell_note)
+    # 字体包、\documentclass、导言区都在注入目标里，检测要看它而不是壳。
+    main_text = read_text(src / inject_target)
 
     type1 = detect_type1(main_text)
     tree_type1 = detect_type1_tree(src)
@@ -441,7 +499,8 @@ def main():
     print(f"\n[{root.name}] 依次尝试字体方案（每个方案实际编译验证）\n")
     for rid in order:
         print(f"  → {rid}", end="", flush=True)
-        res = try_recipe(root, src, main_file, rid, keep=False, tree_type1=tree_type1)
+        res = try_recipe(root, src, main_file, rid, keep=False,
+                         tree_type1=tree_type1, inject_target=inject_target)
         trials.append(res)
         status = "中文已进 PDF" if res["probe_ok"] else f"中文丢失（{res['cjk_chars']} 字）"
         print(f"  {res['errors']} 错误 / {res['pages']} 页 / {status}")
@@ -460,13 +519,15 @@ def main():
         )
 
     print(f"\n  采用 {chosen['recipe']}：{chosen['label']}")
-    final = try_recipe(root, src, main_file, chosen["recipe"], keep=True, tree_type1=tree_type1)
+    final = try_recipe(root, src, main_file, chosen["recipe"], keep=True,
+                       tree_type1=tree_type1, inject_target=inject_target)
 
     data = {
         "project": str(root),
         "chosen": final,
         "trials": trials,
         "type1_detected": type1,
+        "inject_target": inject_target,
         "probe": PROBE,
     }
     save_json(out, data)

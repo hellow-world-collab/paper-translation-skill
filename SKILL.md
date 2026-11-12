@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.5
+version: 1.0.6
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -419,6 +419,9 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | `joint state` 被术语表逼着译成「关节状态」 | `glossary.tsv` 的 `joint→关节` 是从机器人本体论文里带过来的，在「联合状态表示」的语境下明显不对 | 术语表整体降为参考（见上），模型按语境译「联合状态」；`audit` 的低命中率不再标 ✗/⚠，避免把正确判断报成错误 |
 | `check_coverage` 在 2611.11605 上报 6 处「漏译」，其实一处都不是 | 被作者注释掉的 `% \section{Limitations and Future Work}`、`\author{...}` 里按惯例保留的人名与机构、以及 `\begin{tabular}{lcc ccccc cccc}` 的列格式参数 | 标题匹配前先按等长空格抹掉注释；`author` / `IEEEauthorblockN/A` 加进 `NONPROSE_CMDS` 连嵌套参数一起抹；`TABULAR_SPEC` 吃掉紧跟环境名的列格式参数。修后 6 处 → 0 处，真标题 `\section{METHOD}` 仍报警 |
 | 消融表里的 17 个 ✓ 全是空白，编译却 0 错误 | 摘掉 `amssymb` 后 `\checkmark` 由 unicode-math 定义成字符 U+2713，拉丁字体没有该字形；注入块想用 `\ding{51}` 替换，但外层 `\ifdefined\ding` 恒为假——**pifont 从来没被加载** | 导言区加 `\IfFileExists{pifont.sty}{\usepackage{pifont}}{}`（同名包重复加载安全、缺包不报错），`AtBeginDocument` 里的重定义才真正生效。2611.11605 实测 Missing character 17 → 0 |
+| `00README` 指定的 toplevel 是纯 `\input` 兼容壳，`inject_cjk` 报「找不到 \begin{document}」 | 2610.31617 的 `main_highlighted.tex` 只有一行 `\input{main.tex}`，`\documentclass` 与 `\begin{document}` 都在 `main.tex`；旧逻辑把「编译入口」和「注入目标」当成同一文件 | 新增 `resolve_inject_target()` 沿 `\input` 链找出真正承载 `\begin{document}` 的文件作注入目标，**编译入口仍是 toplevel**（`build.py` / `audit.py` 的产物 PDF 名不变）。实测 A1 0 错误 / 8 页 / 中文进 PDF |
+| `check_coverage` 把 `\hypersetup{pdftitle=...}` 当成「标题漏译」，卡住 `build.py` | PDF 元数据只进文档属性、不印到纸上，且常与 `\title{}` 同文；2611.11605 那三类误报修完后，2610.31617 又暴露这一类 | `hypersetup` 加进 `NONPROSE_CMDS`，`read_balanced` 连嵌套 `{}` 一起抹。1 处 → 0 处；新增回归同时验证真漏译仍能报出 |
+| 公式里 11 个粗体 Ω 全是空白，编译 0 错误、审计也看不见 | A1 用 unicode-math，默认 `\mathbf` 落到拉丁文本粗体；`\mathbf{\Omega}` 被解析成 U+1D6EA，lmroman10-bold 没有该字形。`build.json` 的 `missing` 只统计中文缺字 | unicode-math 改带官方选项 `[mathbf=sym]`，让 `\mathbf` 走数学字母表；**不动源码一个字符**。最小工程实测缺字 1 → 0、0 错误，本篇 11 → 0 |
 
 ### 分批翻译别用 offset
 
