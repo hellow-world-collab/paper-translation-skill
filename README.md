@@ -306,8 +306,8 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 | 2509.09674 | PDF（pdf2zh） | 版式、图、公式原位，正文全中文 |
 | 2508.08241 *BeyondMimic* | LaTeX | Science 模板（`sciencemag.bst` + 11 张图）：字体注入复跑 A1 / 0 错误 / 59 页；项目里另有早前产出的 54 页中文版 |
 | 2603.09460v2 *SEA-Nav* | LaTeX | ieeeconf 双栏：8 页原文 → 7 页中文，0 错误 / 0 溢出；图 1、表 I–V、摘要、附录、参考文献标题全中文；双栏对照页经 Chrome CDP 真实验收 |
-| 2611.11605 *ScanDreamer* | LaTeX | IEEEtran 双栏：8 页原文 → 8 页中文，0 错误 / 0 缺字；2 张跨栏宽表 + 17 个 ✓ 全部到位；1.0.4/1.0.5 首次从零端到端实测 18′45″（源码落盘 00:39:19 → 交付 PDF 00:58:05，含 2 次现场修 bug 与重编译；扣除返工约 14′）；对照页 CDP 验收 16 canvas / 3435 span / 0 JS 错误 |
-| 2610.31617 *DiffDreamer* | LaTeX | IEEEtran 双栏（toplevel 为纯 `\input` 兼容壳）：8 页原文 → 7 页中文，0 错误 / 0 溢出 / 0 缺字；90 段 2 批、17 个书签锚点；1.0.5 首次实战复核又修出 3 个边界问题（兼容壳注入、hypersetup 误报、`\mathbf{\Omega}` 空白）；端到端 23′（含 3 次现场修复，扣除约 14′）；对照页 CDP 15 canvas / 2301 span / 0 JS 错误 |
+| 2611.11605 *ScanDreamer* | LaTeX | IEEEtran 双栏：8 页原文 → 8 页中文，0 错误 / 0 缺字；2 张跨栏宽表 + 17 个 ✓ 全部到位；首次从零端到端实测 18′45″（源码落盘 00:39:19 → 交付 PDF 00:58:05，含 2 次现场修 bug 与重编译；扣除返工约 14′）；对照页 CDP 验收 16 canvas / 3435 span / 0 JS 错误 |
+| 2610.31617 *DiffDreamer* | LaTeX | IEEEtran 双栏（toplevel 为纯 `\input` 兼容壳）：8 页原文 → 7 页中文，0 错误 / 0 溢出 / 0 缺字；90 段 2 批、17 个书签锚点；定稿前实战复核又修出 3 个边界问题（兼容壳注入、hypersetup 误报、`\mathbf{\Omega}` 空白）；端到端 23′（含 3 次现场修复，扣除约 14′）；对照页 CDP 15 canvas / 2301 span / 0 JS 错误 |
 
 ## 已知限制
 

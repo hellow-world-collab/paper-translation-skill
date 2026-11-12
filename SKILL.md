@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.6
+version: 1.0.4
 author: hellow-world-collab
 visibility: "public"
 license: MIT
