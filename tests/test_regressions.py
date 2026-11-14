@@ -196,6 +196,115 @@ t6 = " | ".join(f["text"] for f in scan(d6b)["suspects"])
 check("pdftitle 元数据不再误报", "Coupling World Models" not in t6, t6[:110])
 check("真正未覆盖的正文仍能报出", "definitely untranslated" in t6, t6[:140])
 
+# ── 1803.10122《World Models》实战新增 ────────────────────────────────
+from apply import relax_float_tail                       # noqa: E402
+from check_coverage import NONPROSE_CMDS                # noqa: E402
+
+check("ICML 机构名 \\icmlaffiliation 进非正文命令表",
+      "icmlaffiliation" in NONPROSE_CMDS)
+icml_sty = (r"\centerline{\large\bf Abstract}" + "\n"
+            + r"\def\fnum@figure{Figure \thefigure}")
+loc = icml_sty
+for pat, rep in CLASS_LOCALIZE:
+    loc = pat.sub(rep, loc)
+check("ICML 硬编码 Abstract 被本地化", "摘要" in loc and "Abstract" not in loc, loc[:90])
+check("Figure \\thefigure 带空格也能本地化", "图~" in loc, loc[:90])
+float_src = r"\end{center}" + "\n" + r"\vskip -0.45in" + "\n" + r"\end{figure}"
+float_out, hit = relax_float_tail(float_src)
+check("浮动体尾部负 vskip 被置零",
+      hit == 1 and "0in" in float_out and "-0.45in" not in float_out, float_out[:90])
+check("负 vskip 处理幂等且不误伤其它位置",
+      relax_float_tail(float_out)[1] == 0
+      and relax_float_tail(r"\vskip -0.45in" + "\ntext")[1] == 0)
+
+# ── 9 篇「世界模型 → WAM」批量实战新增修复 ─────────────────────────────
+from apply import unmask                                 # noqa: E402
+from build import normalize_xetex                       # noqa: E402
+from check_tr import looks_like_name_list               # noqa: E402
+from extract import DECLARATION_COMMANDS                # noqa: E402
+from inject_cjk import XETEX_INCOMPATIBLE               # noqa: E402
+
+print("\n⑦ 2301.08243 / 2601.21998：XeLaTeX 不兼容宏包与数学宏")
+check("axessibility / accsupp 进摘除清单",
+      XETEX_INCOMPATIBLE == {"axessibility", "accsupp"})
+inj = src.replace("\\\\", "\\")
+check("主文件 + input 树 + zh 三处都用了同一摘除集合",
+      inj.count("set(removed) | XETEX_INCOMPATIBLE") == 2
+      and inj.count("set(removed_zh) | XETEX_INCOMPATIBLE") == 1)
+check("\\boldsymbol 在 unicode-math 下改走 \\symbf",
+      "let\\boldsymbol\\symbf" in inj)
+
+print("\n⑧ 2501.03575 / 2602.15922：NVIDIA 模板与类文件标签")
+check("termes 配方显式加载 fontspec 三件套",
+      "usepackage{fontspec}" in inj
+      and "setmainfont{TeX Gyre Termes}" in inj
+      and "setmonofont{TeX Gyre Cursor}" in inj)
+check("\\setmainfont 与 \\setmathfont 前都清空 defaultfontfeatures",
+      inj.count("\\defaultfontfeatures{}") >= 2)
+nv_cls = ("{\\large\\bfseries\\headingfont Abstract}\n"
+          "\\DisableLigatures{encoding = *, family = *}\n")
+nv_loc = nv_cls
+for pat, rep in CLASS_LOCALIZE:
+    nv_loc = pat.sub(rep, nv_loc)
+check("NVIDIA 硬编码 Abstract 本地化为「摘要」",
+      "摘要" in nv_loc and "Abstract" not in nv_loc, nv_loc[:90])
+check("microtype \\DisableLigatures 整行注释掉",
+      any(l.lstrip().startswith("%") and "DisableLigatures" in l
+          for l in nv_loc.splitlines()))
+
+print("\n⑨ 2506.09985 / 2602.15922：抽取与回填的边界情况")
+check("字号／字形声明命令进 DECLARATION_COMMANDS",
+      all(c in DECLARATION_COMMANDS
+          for c in ("scriptsize", "footnotesize", "bfseries", "centering")))
+d_segs = one_file(
+    r"\centering\scriptsize{The left arm picks up the red cube and places it on the plate.}" + "\n")
+check("\\centering\\scriptsize{成句任务指令} 被抽成正文",
+      len(d_segs) == 1 and "The left arm picks up" in d_segs[0].masked,
+      d_segs[0].masked[:80] if d_segs else "0 段")
+p_segs = one_file(
+    r"\prompt{The video captures a robot arm picking up the cup and moving it to the shelf.}" + "\n")
+check("未知自定义命令的成句参数被递归抽取",
+      len(p_segs) == 1 and "The video captures" in p_segs[0].masked
+      and "\\prompt" not in p_segs[0].masked,
+      p_segs[0].masked[:80] if p_segs else "0 段")
+check("\\abstract{% 结尾补换行，不吞中文",
+      unmask("⟪P0001⟫这是摘要正文", [r"\abstract{%"]).startswith("\\abstract{%\n这是摘要"))
+check("\\midrule 与 DINOv2 之间补空格",
+      unmask("⟪P0001⟫DINOv2 特征", [r"\midrule"]).startswith("\\midrule DINOv2"))
+check("回填结果不整体 strip，保护值 `\\ ` 不被吃掉",
+      unmask("⟪P0001⟫测试", [r"\ "]) == "\\ 测试")
+
+print("\n⑩ 2501.03575 / 2602.15922：编译前 XeLaTeX 归一化")
+dn = Path(tempfile.mkdtemp(prefix="arz109-"))
+doc = ("\\documentclass{article}\n\\pdfoutput=1\n"
+       "\\usepackage{microtype}\n\\begin{document}\n正文\n\\end{document}\n")
+# 故意同时造 LF 与 CRLF：_common.read_text 不做通用换行转换，Windows 下
+# 若正则不收 \r，CRLF 那份会静默漏改 \pdfoutput=1。
+(dn / "lf.tex").write_bytes(doc.encode("utf-8"))
+(dn / "crlf.tex").write_bytes(doc.replace("\n", "\r\n").encode("utf-8"))
+touched = normalize_xetex(dn)
+check("LF / CRLF 两份都被改写", sorted(touched) == ["crlf.tex", "lf.tex"], str(touched))
+after_lf = (dn / "lf.tex").read_bytes().decode("utf-8")
+after_crlf = (dn / "crlf.tex").read_bytes().decode("utf-8")
+check("两种换行下 \\pdfoutput=1 都被注释",
+      "\n% arxiv-zh-tex: \\pdfoutput" in after_lf
+      and "% arxiv-zh-tex: \\pdfoutput" in after_crlf,
+      after_crlf.splitlines()[1][:70])
+check("microtype 守卫插在 \\begin{document} 之前",
+      after_lf.index("protrusion=false,expansion=false") < after_lf.index("\\begin{document}"))
+check("归一化幂等（第二遍不再改文件）", normalize_xetex(dn) == [])
+
+print("\n⑪ 2506.09985 / 2607.08639：贡献者名单不再误报漏译")
+names_src = ("Alice Smith, Bob Jones, Carol Lee, David Wu, Eva Chen, Frank Lin, "
+             "and the PerceptionLM team")
+check("人名名单豁免", looks_like_name_list(names_src, "Alice Smith 等人与 PerceptionLM 团队"))
+check("普通英文正文不豁免",
+      not looks_like_name_list(
+          "The model is trained with several settings, then evaluated, "
+          "and finally compared, and reported here.", "模型在多种设置下训练并评估比较。"))
+check("名单段译文无汉字时不豁免",
+      not looks_like_name_list(names_src, "Alice Smith, Bob Jones et al."))
+
 print("\n" + ("全部通过" if all(RESULTS) else f"{RESULTS.count(False)} 项失败"),
       f"({sum(RESULTS)}/{len(RESULTS)})")
 sys.exit(0 if all(RESULTS) else 1)

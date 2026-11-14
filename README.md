@@ -309,6 +309,29 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 | 2611.11605 *ScanDreamer* | LaTeX | IEEEtran 双栏：8 页原文 → 8 页中文，0 错误 / 0 缺字；2 张跨栏宽表 + 17 个 ✓ 全部到位；首次从零端到端实测 18′45″（源码落盘 00:39:19 → 交付 PDF 00:58:05，含 2 次现场修 bug 与重编译；扣除返工约 14′）；对照页 CDP 验收 16 canvas / 3435 span / 0 JS 错误 |
 | 2610.31617 *DiffDreamer* | LaTeX | IEEEtran 双栏（toplevel 为纯 `\input` 兼容壳）：8 页原文 → 7 页中文，0 错误 / 0 溢出 / 0 缺字；90 段 2 批、17 个书签锚点；定稿前实战复核又修出 3 个边界问题（兼容壳注入、hypersetup 误报、`\mathbf{\Omega}` 空白）；端到端 23′（含 3 次现场修复，扣除约 14′）；对照页 CDP 15 canvas / 2301 span / 0 JS 错误 |
 
+### 批量实战：9 篇「世界模型 → WAM」
+
+同一轮里连翻 8 篇 LaTeX 主链 + 1 篇 PDF 分支（LeCun 立场文，非 arXiv），
+每篇都做到 `check_coverage` 0 处 → 全段译文提交 → `build` 0 编译错误 → 中文 PDF → 双栏对照页。
+这一轮把 XeLaTeX 不兼容宏包、NVIDIA 模板 TFM 字体、未知自定义命令里的成句提示词、
+回填边界、浮动体负间距、贡献者名单误报等一批模板级问题修进了技能，详见 `SKILL.md`「批量实战」一节。
+
+| 论文 | 分支 | 段数 | 中文 PDF | 编译 | 对照页 |
+|---|---|---|---|---|---|
+| 1803.10122 *World Models* | LaTeX | 200 | 19 页 / 12565 汉字 | 0 错误 / 0 溢出 | ✓ |
+| OpenReview `BZ5a1r-kVsf` *A Path Towards Autonomous Machine Intelligence* | **PDF** | — | 62 页 / 28029 汉字（中文占比 39.4%） | pdf2zh | ✓（另有双语版 PDF） |
+| 2301.08243 *I-JEPA* | LaTeX | 260 | 15 页 / 12318 汉字 | 0 错误 / 1 处 6pt | ✓ |
+| 2404.08471 *V-JEPA* | LaTeX | 445 | 21 页 / 14439 汉字 | 0 错误 / 0 溢出 | ✓ |
+| 2506.09985 *V-JEPA 2* | LaTeX | 582 | 43 页 / 28028 汉字 | 0 错误 / 0 溢出 | ✓ |
+| 2501.03575 *Cosmos* | LaTeX | 899 | 66 页 / 38669 汉字 | 0 错误 / 16 处 ≤8pt | ✓ |
+| 2602.15922 *DreamZero* ★ | LaTeX | 394 | 32 页 / 19587 汉字 | 0 错误 / 0 溢出 | ✓（CDP：worker / 187 命中 / 0 JS 错误） |
+| 2601.21998 *LingBot-VA 1.0* | LaTeX | 346 | 29 页 / 13392 汉字 | 0 错误 / 1 处 2pt | ✓ |
+| 2607.08639 *LingBot-VA 2.0* | LaTeX | 181 | 28 页 / 17969 汉字 | 0 错误 / 0 溢出 | ✓ |
+
+小溢出（≤8pt）都在表格 / 长 URL 行，目视未越界，作为告警保留；
+参考文献页、整页作者名单、算法伪码保持英文都是既定行为，不是漏译。
+`tests/test_regressions.py` 现为 **61/61** 通过（本轮新增 20 项，逐条钉住上述修复）。
+
 ## 已知限制
 
 - **扫描件**：没有文字层，PDF 分支抽不出块 → 先 OCR。

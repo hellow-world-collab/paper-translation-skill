@@ -35,6 +35,21 @@ from _common import MARKER_RE, cjk_ratio, die, load_json, meta_dir, save_json  #
 LATIN_RUN = re.compile(r"[A-Za-z][A-Za-z'’\-]*(?:[,\s]+[A-Za-z][A-Za-z'’\-]*){6,}")
 # 正文段允许的「没翻」下限：低于这个汉字占比就当没译
 MIN_CJK = 0.08
+# 致谢 / 作者名单整段几乎都是人名与机构名，中文占比天然 < 8%，
+# 但译文是完整的（2506.09985 的致谢段实测 30 余个人名、汉字占比 4%）。
+# 「首字母大写且至少两个词」的专名，用来判断是不是这类名单。
+PROPER_NAME = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
+
+
+def looks_like_name_list(source: str, translated: str) -> bool:
+    """纯人名/机构名单：不能按「中文过少」判成漏译。"""
+    names = PROPER_NAME.findall(source)
+    if len(names) < 5 or source.count(",") < 3:
+        return False
+    letters = len(re.findall(r"[A-Za-z]", source))
+    covered = sum(len(n) for n in names) / max(1, letters)
+    # 仍要求译文里有汉字，且与原句不同（原样返回在调用处已经单独判过）
+    return covered >= 0.5 and bool(re.search(r"[\u4e00-\u9fff]", translated))
 
 
 def bare(text: str) -> str:
@@ -76,14 +91,17 @@ def scan(root: Path, strict: bool = False) -> dict:
             continue
 
         # 公式/纯符号段没有汉字是正常的，只对含 8 个以上英文词的段要求中文
-        if s["role"] != "head" and words_src >= 8 and cjk_ratio(b) < MIN_CJK:
+        if (s["role"] != "head" and words_src >= 8 and cjk_ratio(b) < MIN_CJK
+                and not looks_like_name_list(body, b)):
             thin.append({"id": s["id"], "file": s["file"], "cjk": round(cjk_ratio(b), 3),
                          "src": s["source"][:90], "tr": b[:90]})
 
+        # 贡献者 / 作者名单里连续英文人名不是「漏抄一段」，别误报成片英文
         longest = ""
-        for m in LATIN_RUN.finditer(b):
-            if len(m.group(0)) > len(longest):
-                longest = m.group(0)
+        if not looks_like_name_list(body, b):
+            for m in LATIN_RUN.finditer(b):
+                if len(m.group(0)) > len(longest):
+                    longest = m.group(0)
         if longest and run_len(longest) >= 7:
             latin.append({"id": s["id"], "file": s["file"], "words": run_len(longest),
                           "run": longest[:100], "role": s["role"]})

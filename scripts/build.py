@@ -28,6 +28,42 @@ UNDEFINED_CMD = re.compile(r"^! Undefined control sequence\.|: Undefined control
 # biblatex 的 .bbl 由 biber 生成；对它跑 bibtex 只会失败并留下空文献表
 BIBLATEX_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*biblatex\b|\\addbibresource\b")
 
+# XeLaTeX 编译前的源码归一化。只改 out/，绝不碰 zh/ 与 segments.json 的位置：
+# 这些是「引擎差异」而不是译文问题，放在编译环节最合适，apply.py 重建 out/ 后
+# 每次 build 都会自动再打一遍，不存在项目内补丁依赖。
+# 行尾允许一个 \r：_common.read_text 直接 read_bytes().decode()，不做通用换行
+# 转换，Windows 上用 Path.write_text 产出的 CRLF 会让 `(?m)$` 停不下来，
+# 导致 \pdfoutput=1 静默漏改（回归用例 ⑩ 实测）。
+PDFOUTPUT_LINE = re.compile(r"(?m)^([ \t]*)\\pdfoutput\s*=\s*\d+[ \t]*\r?$")
+MICROTYPE_MARK = "% arxiv-zh-tex: XeLaTeX 兼容（microtype）"
+
+
+def normalize_xetex(work: Path) -> list[str]:
+    """去掉 pdftex 专有指令、关掉会在 TFM 字体上炸的 microtype 字形探测。"""
+    touched: list[str] = []
+    for f in work.rglob("*.tex"):
+        text = read_text(f)
+        # \pdfoutput=1 是 pdftex 原语；XeLaTeX 下未定义，会在第 1 行报
+        # "Undefined control sequence" 并连带 "Missing \begin{document}"
+        # （2602.15922 实测 2 个错误）。
+        new = PDFOUTPUT_LINE.sub(
+            lambda m: m.group(1) + "% arxiv-zh-tex: \\pdfoutput 是 pdftex 原语，XeLaTeX 下略过",
+            text)
+        # microtype 的 protrusion 会用 \XeTeXglyph 量字符宽度，遇到 TFM 字体
+        # 报 "Cannot use XeTeXglyph with tcrm0900; not a native platform font"
+        # 并连锁 "Missing number"（2501.03575 / 2602.15922 实测各 2 个）。
+        # \ifdefined 保证没加载 microtype 的论文完全不受影响。
+        if "\\begin{document}" in new and MICROTYPE_MARK not in new:
+            guard = ("\\ifdefined\\microtypesetup"
+                     "\\microtypesetup{protrusion=false,expansion=false}\\fi\n"
+                     + MICROTYPE_MARK + "\n")
+            new = re.sub(r"(\\begin\s*\{document\})",
+                         lambda m: guard + m.group(1), new, count=1)
+        if new != text:
+            write_text(f, new)
+            touched.append(f.name)
+    return touched
+
 
 def pick_bib_tool(work: Path, main: str) -> str | None:
     """判断该跑 bibtex 还是 biber（都没有就返回 None）。"""
@@ -128,6 +164,10 @@ def main():
     work = root / "out"
     if not work.is_dir():
         die("out/ 不存在，请先跑 apply.py（它会从 zh/ 重建 out/）")
+
+    fixed = normalize_xetex(work)
+    if fixed:
+        ok(f"XeLaTeX 兼容归一化：{', '.join(fixed[:4])}")
 
     main_file = manifest["main"]
     engine = "xelatex"

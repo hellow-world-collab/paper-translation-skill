@@ -87,7 +87,15 @@ OPAQUE_COMMANDS = {
 # 最终留在中文 PDF 里是英文（2607.15036 实测漏 8 个小标题 + 3 段正文）。
 DECLARATION_COMMANDS = {
     "noindent", "indent", "centering", "raggedright", "raggedleft",
-    "flushleft", "flushright", "small", "normalsize", "large", "Large", "LARGE",
+    "flushleft", "flushright",
+    # 字号 / 字形声明同样无参。NVIDIA 模板把整句任务指令写成
+    # \centering\scriptsize{The left arm picks up ...} 放在表格单元格里；
+    # 漏掉 scriptsize 会把命令连同 {} 里的正文一起整体保护，129 处英文指令
+    # 全部留在中文 PDF 里（2602.15922 实测）。
+    "tiny", "scriptsize", "footnotesize", "small", "normalsize",
+    "large", "Large", "LARGE", "huge", "Huge",
+    "normalfont", "rmfamily", "sffamily", "ttfamily",
+    "bfseries", "mdseries", "itshape", "upshape", "slshape", "scshape",
 }
 
 # 前后参数角色不同：值为「不译的下标」
@@ -476,6 +484,31 @@ def tokenize(s: str, start: int = 0, end: int | None = None,
                         push("protect", cursor, gs + 1)
                         out.extend(tokenize(s, gs + 1, ge - 1, ctx=sub_ctx))
                         push("protect", ge - 1, ge)
+                    cursor = ge
+                i = k
+                continue
+
+            # 未知自定义命令：参数是成句的自然语言时只保护命令名。
+            # 例：NVIDIA 模板的 \prompt{The video captures a highway scene ...}，
+            # 整块保护会让图注里的长提示词永远留英文（2501.03575 实测 21 处）。
+            # 保守阈值「至少 4 个英文单词」：\xxx{PPO}、\xxx{fig.pdf} 这类结构参数
+            # 不会被误当正文；OPAQUE_COMMANDS / MIXED_ARGS / TEXT_COMMANDS 已在上面分流。
+            prose_groups = [
+                idx for idx, (gs, ge) in enumerate(groups)
+                if re.search(r"(?:[A-Za-z]{2,}[\s,.;:]+){3,}[A-Za-z]{2,}",
+                             s[gs + 1: ge - 1])
+            ]
+            if prose_groups and name not in OPAQUE_COMMANDS:
+                start_protect = opts_end if opts_end > j else args_start
+                push("protect", i, start_protect)
+                cursor = start_protect
+                for idx, (gs, ge) in enumerate(groups):
+                    if idx in prose_groups:
+                        push("protect", cursor, gs + 1)
+                        out.extend(tokenize(s, gs + 1, ge - 1, ctx=cur()))
+                        push("protect", ge - 1, ge)
+                    else:
+                        push("protect", cursor, ge)
                     cursor = ge
                 i = k
                 continue

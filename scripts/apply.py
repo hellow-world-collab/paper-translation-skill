@@ -54,14 +54,56 @@ def check_segment(seg: dict, translated: str) -> str | None:
     return None
 
 
+# 中文题注一般比英文长 1–2 行。很多老模板在 \caption 之后、\end{figure}
+# 之前用一个负 \vskip 把浮动体「收紧」，英文短题注时刚好；译成中文后这段
+# 负间距会把紧随的正文拉上来压住题注（1803.10122 首页实测）。
+# 只处理 figure/table 浮动体末尾、\end{center} 之后紧接的负 \vskip，
+# 把它置零；其它位置的负间距（作者块、公式上下）一律不动。
+# 正则只匹配带负号的写法，替换成 0 后天然幂等。
+FLOAT_TAIL_VSKIP = re.compile(
+    r"(\\end\{(?:center|flushleft|flushright)\}\s*\\vskip\s*)"
+    r"-[0-9]*\.?[0-9]+\s*(in|pt|cm|mm|em|ex|bp)"
+    r"(?=\s*\\end\{(?:figure|table)\*?\})"
+)
+
+
+def relax_float_tail(text: str) -> tuple[str, int]:
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        count += 1
+        return m.group(1) + "0" + m.group(2)
+
+    return FLOAT_TAIL_VSKIP.sub(repl, text), count
+
+
 def unmask(translated: str, protected: list[str]) -> str:
     def repl(m):
         idx = int(m.group(1)) - 1
-        if 0 <= idx < len(protected):
-            return protected[idx]
-        return m.group(0)
+        val = protected[idx] if 0 <= idx < len(protected) else m.group(0)
+        # \abstract{% 这类写法里 % 原本在行尾、只为吃掉换行；译文回填成一行后
+        # 会把后面整段中文连同右花括号一起注释掉，TeX 报
+        # "File ended while scanning use of \abstract"（2601.21998 实测）。
+        # 保护值以未转义的 % 结尾时补回换行。
+        if val.endswith("%") and not val.endswith("\\%"):
+            val += "\n"
+        # 保护内容若以「字母控制序列」结尾，而译文紧接着一个 ASCII 字母，
+        # TeX 会把两者读成同一个未定义控制序列：⟪P⟫ 里是 \midrule，
+        # 译文写成 ⟪P⟫DINOv2 → \midruleDINOv2（2506.09985 实测报错）。
+        # 只在标记边界补一个空格，不动其它位置。
+        nxt = translated[m.end():m.end() + 1]
+        if (nxt and re.match(r"[A-Za-z]", nxt)
+                and re.search(r"\\[A-Za-z@]+\*?$", val)):
+            val += " "
+        return val
 
-    out = MARKER_RE.sub(repl, translated).strip()
+    # 只裁模型译文自带的首尾空白，不要在回填之后再 .strip()：
+    # 保护内容可能是 `\ `（反斜杠+空格，表格里 Avg.\ \\ 的常见写法），
+    # 尾部空格被裁掉就退化成裸反斜杠，与后面的 \\ 连成 \\\，
+    # 表格行不再结束 → Misplaced \noalign + 连锁 99 个 Missing }
+    # （2607.08639 实测）。
+    out = MARKER_RE.sub(repl, translated.strip())
     # xeCJK 把中文字符的 catcode 设为 11，因此 \命令 后紧跟中文会被并成
     # 一个未定义的控制序列（实测 \boldmath这 直接报错）。必须在交界处补空格。
     out = re.sub(r"(\\[A-Za-z@]+\*?)(?=[\u4e00-\u9fff])", r"\1 ", out)
@@ -119,7 +161,7 @@ def main():
             f"  python {Path(__file__).resolve().parent / 'extract.py'} {root} --force\n"
             "译文按 id 保存，重新抽取不会丢。")
 
-    applied = skipped = unchanged = 0
+    applied = skipped = unchanged = relaxed_total = 0
     issues: list[dict] = []
 
     for rel, items in by_file.items():
@@ -151,6 +193,9 @@ def main():
             text = text[: seg["start"]] + replacement + text[seg["end"]:]
             applied += 1
 
+        text, relaxed = relax_float_tail(text)
+        relaxed_total += relaxed
+
         if text != original and not args.dry_run:
             write_text(path, text)
 
@@ -162,6 +207,8 @@ def main():
     print(f"  校验失败  {len(issues)}")
     if unchanged:
         print(f"  与原样相同 {unchanged}（视为不译）")
+    if relaxed_total:
+        print(f"  浮动体负间距置零 {relaxed_total} 处（中文题注变长时防止正文压住题注）")
 
     if issues:
         print("\n  校验未通过（已保留原文，需人工处理）：")

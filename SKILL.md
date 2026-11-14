@@ -423,6 +423,27 @@ python $S/check_tr.py ./2508.08241 --json   # 给上层脚本消费
 | `check_coverage` 把 `\hypersetup{pdftitle=...}` 当成「标题漏译」，卡住 `build.py` | PDF 元数据只进文档属性、不印到纸上，且常与 `\title{}` 同文；2611.11605 那三类误报修完后，2610.31617 又暴露这一类 | `hypersetup` 加进 `NONPROSE_CMDS`，`read_balanced` 连嵌套 `{}` 一起抹。1 处 → 0 处；新增回归同时验证真漏译仍能报出 |
 | 公式里 11 个粗体 Ω 全是空白，编译 0 错误、审计也看不见 | A1 用 unicode-math，默认 `\mathbf` 落到拉丁文本粗体；`\mathbf{\Omega}` 被解析成 U+1D6EA，lmroman10-bold 没有该字形。`build.json` 的 `missing` 只统计中文缺字 | unicode-math 改带官方选项 `[mathbf=sym]`，让 `\mathbf` 走数学字母表；**不动源码一个字符**。最小工程实测缺字 1 → 0、0 错误，本篇 11 → 0 |
 
+### 批量实战（9 篇「世界模型 → WAM」，LaTeX 主链 8 篇 + PDF 分支 1 篇）
+
+一次连翻 9 篇（含 66 页 Cosmos、43 页 V-JEPA 2、36 页 DreamZero）又暴露了一批只在「论文写得很不一样」时才出现的问题，都已内建：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| CVPR 模板注入后 `bad native font flag` / `Extended mathchar used as mathchar` | `axessibility[accsupp]` 在 XeLaTeX 下改字体映射；另一篇作者自定义 `\vx` / `\vs` 数学宏与 unicode-math 冲突 | `XETEX_INCOMPATIBLE` 在主文件、`\input` 树、`zh/` 三处一并摘除 `axessibility` / `accsupp`；数学宏冲突时**改用 A2 配方**（保留原数学、不加载 unicode-math），别硬改作者宏 |
+| 附录里 `\boldsymbol{\pi_{0.5}}` 报 6 个 `Improper alphabetic constant` | 同上，unicode-math 下 `\boldsymbol` 语义变了 | 注入块加 `\AtBeginDocument{\ifdefined\boldsymbol\let\boldsymbol\symbf\fi}` |
+| NVIDIA `nvidiatechreport.cls` 注入后上千条错、`Unable to find TFM file "NVIDIASans_It"` | 类文件用 `\pdfmapline` 挂 TFM TrueType 并 `\renewcommand{\rmdefault}{NVIDIASans}`；`XCharter.fontspec` 留下的 `\defaultfontfeatures` 又污染了按字体名解析 | A1 配方现在**无条件**显式加载 `fontspec` 并设 TeX Gyre Termes / Heros / Cursor，`\setmainfont` 与 `\setmathfont` 前各清一次 `\defaultfontfeatures{}` |
+| 首页摘要仍是 `Abstract`，或 `microtype` 报 `Disabling ligatures ... only possible with pdftex` | 类文件写死 `{\large\bfseries\headingfont Abstract}`（命令与英文之间还隔了一个宏）；`fairmeta.cls` 里有 pdftex 专用的 `\DisableLigatures` | `CLASS_LOCALIZE` 允许 `\bfseries` 与 `Abstract` 之间夹任意 `\命令`；`\DisableLigatures` 整行注释（幂等，对中文排版无影响） |
+| 覆盖率检查报几十上百处「漏译」，其实是长视频提示词 / 表格里的任务指令 | `\prompt{The video captures...}` 这类未知自定义命令整块被保护；`\centering\scriptsize{The left arm picks up...}` 里的字号声明命令被当成带参命令 | `extract.py`：未知自定义命令的参数若是成句自然语言，只保护命令名与花括号、递归抽取参数内正文；`DECLARATION_COMMANDS` 补齐字号 / 字形 / 对齐声明 |
+| `\abstract{%` 把整段中文注释掉；`\midruleDINOv2` 未定义；表格连锁 99 个 `Missing }` | 三处都是 `unmask()` 回填边界：保护值以 `%` 结尾、以 `\命令` 结尾紧接 ASCII 字母、以及回填结果整体 `.strip()` 把保护值 `\ ` 的尾空格吃掉 | 分别补换行、补空格、改成只裁模型译文；`apply.py` 三处已修 |
+| 图 1 题注被正文盖住 | 作者在图浮动体末尾写了 `\vskip -0.45in`，英文短题注刚好够，中文题注变长后正文被拉上来 | `apply.py` 的 `relax_float_tail()` 只把 `\end{center}` 后紧接 `\end{figure\|table}` 的负 `\vskip` 置零（幂等，不误伤别处） |
+| 致谢 / 贡献者名单被 `check_tr` 判「中文占比 4%」「成片英文」 | 一段里 30 多个人名，本来就该照抄 | `looks_like_name_list()` 对「≥5 组首字母大写人名 + ≥3 逗号 + 译文含汉字」的段落豁免 `low_cjk` 与 `latin_runs` |
+| 编译报 `\pdfoutput=1` 未定义、`Cannot use XeTeXglyph with tcrm0900` / `Missing number` | pdftex 原语与 microtype 的 `\XeTeXglyph` 字形探测在 XeLaTeX 下失效 | `build.py` 的 `normalize_xetex()` **只在 `out/` 里**注释 `\pdfoutput`、在 `\begin{document}` 前插 `\ifdefined\microtypesetup...\fi` 守卫；正则收 `\r`，Windows 下 CRLF 文件也不会静默漏改 |
+| ICML 模板首页 `Abstract` / `Figure 1.` 与 `\icmlaffiliation` 机构名误报 | 标签写死在 `.sty`；机构名被当成正文 | `CLASS_LOCALIZE` 覆盖 `\bf Abstract` 与 `Figure \thefigure`（允许中间空格 / `~`）；`icmlaffiliation` / `icmlauthor` 等进 `NONPROSE_CMDS` |
+| 十几 MB 的源码包 / 原文 PDF 单连接下载必超时 | arXiv 对单连接限速约 21 KB/s | 并发 `Range` 分片下载后拼接，再用 `fetch.py <本地 tar.gz> --out <项目>` 建项目；不要反复重试整包 |
+| 默认解释器没有 PyMuPDF，`render_compare.py` / `audit.py --png` 直接崩 | PDF 分支用的是独立 3.12 环境，主链用的是默认 3.13 | 凡要 `fitz` 的脚本显式用 `.venv-pdf/Scripts/python.exe`；其余主链脚本继续用默认解释器 |
+
+伪代码（`algorithm` / `algorithmic`）保持英文是既定行为——只译 `\caption`，不要当成漏译去改抽取规则。
+
 ### 分批翻译别用 offset
 
 `pending.py --offset N` 的 N 是**待译队列**的下标，不是段落编号。译完一批后再带 offset，会跳过中间若干段。要么每批只用 `--limit N` 从队头取，要么每批前先 `--stats` 核对。

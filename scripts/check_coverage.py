@@ -53,6 +53,9 @@ NONPROSE_CMDS = {
     # \author{\IEEEauthorblockN{...}\IEEEauthorblockA{...}} 会被当成
     # 3 处「成片英文」误报；整块连带嵌套参数一起抹掉。
     "author", "IEEEauthorblockN", "IEEEauthorblockA", "and", "thanks",
+    # ICML 模板把机构名写在 \icmlaffiliation{标签}{\scriptsize Swiss AI Lab,
+    # IDSIA (USI \& SUPSI)} 里；校名按惯例保留英文，1803.10122 实测报 1 处误报。
+    "icmlaffiliation", "icmlauthor", "icmladdress", "email", "affiliation",
     # hyperref 的 PDF 元数据（pdftitle / pdfauthor / pdfkeywords …）只进
     # 文档属性，不印到纸上；2610.31617 的 pdftitle 与 \title{} 同文，
     # 未覆盖区间里会被当成「标题漏译」报 1 处，直接卡住 build.py。

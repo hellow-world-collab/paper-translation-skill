@@ -31,6 +31,10 @@ TYPE1_PACKAGES = {
 }
 # 与 unicode-math 不兼容的数学包
 MATH_CONFLICT = {"amssymb", "amsfonts", "bm", "mathbbol", "mathrsfs"}
+# PDF 可访问性宏包：用 pdfTeX 原语重定义 \caption，XeLaTeX + xeCJK 下会在
+# 每个 \caption / \label 处报 `bad native font flag in map_char_to_glyph`
+# （I-JEPA 2301.08243 实测 44 错 / 0 页）。它只写 PDF 辅助文本，不影响排版。
+XETEX_INCOMPATIBLE = {"axessibility", "accsupp"}
 
 CJK_STACKS = {
     "simsun": dict(
@@ -138,7 +142,20 @@ def build_injection(text: str, recipe: dict,
         gone = sorted(set(gone) | set(found_type1 or []))
         if gone:
             removed += gone
+        # 只要选了 termes 配方，就显式把 \rmdefault 交给 fontspec。
+        # 旧逻辑只在「检出 Type1 字体包」时才 \setmainfont；遇到在 .cls 里用
+        # \pdfmapline + \renewcommand{\rmdefault}{NVIDIASans} 挂一套 TFM 字体的模板
+        # （nvidiatechreport，2501.03575 / 2602.15922 实测）检不出任何 \usepackage，
+        # \rmdefault 就一直是那套 TFM 字体，XeLaTeX 的 dvipdfmx 在 shipout 时
+        # 找不到 NVIDIASans_It.tfm，直接报 fatal 且一个 PDF 都不出。
+        # 用户已用 fontspec 自定义主字体时不覆盖。
+        if not re.search(r"\\setmainfont\s*\{", text):
             lines.append("\\usepackage{fontspec}")
+            # XCharter 一类宏包在 XeLaTeX 下经 *.fontspec 留下继承的字体内联特性，
+            # 会让按「字体名」解析的 TeX Gyre Termes / Heros / Cursor 全部报
+            # "The font ... cannot be found"（2501.03575 实测 9 处），Latin 文字
+            # 静默丢字形。必须在第一条 \set*font 之前清空，放在 xeCJK 之后已太晚。
+            lines.append("\\defaultfontfeatures{}")
             lines.append("\\setmainfont{TeX Gyre Termes}")
             lines.append("\\setsansfont{TeX Gyre Heros}")
             lines.append("\\setmonofont{TeX Gyre Cursor}")
@@ -150,7 +167,16 @@ def build_injection(text: str, recipe: dict,
                 # 2610.31617 实测 11 处。官方选项让 \mathbf 走 \symbf 的数学
                 # 字母表，字形由 TeX Gyre Termes Math 提供；不动源码一个字符。
                 lines.append("\\usepackage[mathbf=sym]{unicode-math}")
+                # \setmathfont 在导言区就要解析字体名；XCharter.fontspec 之类会留下
+                # 继承的字体特性（Extension / Path），只放在 xeCJK 之后清一次已经太晚
+                # （2501.03575 实测报 The font "TeX Gyre Termes Math" cannot be found）。
+                # unicode-math 已加载 fontspec，这里先清空再设数学字体。
+                lines.append("\\defaultfontfeatures{}")
                 lines.append("\\setmathfont{TeX Gyre Termes Math}")
+                # amsbsy 的 \boldsymbol 在 unicode-math 下遇到 \pi_{0.5} 这类
+                # 带下标的希腊字母会报 `Improper alphabetic constant`（LingBot-VA 1.0
+                # 附录表格实测 6 处）。unicode-math 自带 \symbf 能正确处理。
+                lines.append("\\AtBeginDocument{\\ifdefined\\boldsymbol\\let\\boldsymbol\\symbf\\fi}")
                 # unicode-math 与 amssymb 家族互斥，必须摘掉
                 body2, gone2 = strip_packages(
                     text if not removed else _strip_only(text, TYPE1_PACKAGES), MATH_CONFLICT
@@ -271,8 +297,18 @@ CLASS_LOCALIZE = [
     # ── 文档类里写死的结构标签（ieeeconf / IEEEtran 系，2603.09460 实测）──
     # 题注编号前缀由 \fnum@figure / \fnum@table 直接排版，改 \figurename 压不住；
     # 写完 caption 后才套用，所以只能改类文件本身。
-    (re.compile(r"(\\def\\fnum@figure\{)Fig(?:ure)?\.?~?(\\thefigure)"), r"\1图~\2"),
-    (re.compile(r"(\\def\\fnum@table\{)(?:TABLE|Table)~?(\\thetable)", re.I), r"\1表~\2"),
+    # ICML 模板写的是 `\def\fnum@figure{Figure \thefigure}`（英文词后带一个空格，
+    # 既不是 `Fig.~` 也不是 `Figure~`）；旧正则要求紧跟 \thefigure，匹配不到，
+    # 1803.10122 实测中文 PDF 里仍留着「Figure 1.」。允许中间的空白。
+    (re.compile(r"(\\def\\fnum@figure\{)Fig(?:ure)?\.?\s*~?\s*(\\thefigure)"), r"\1图~\2"),
+    (re.compile(r"(\\def\\fnum@table\{)(?:TABLE|Table)\.?\s*~?\s*(\\thetable)", re.I), r"\1表~\2"),
+    # ICML 的 abstract 环境把标题写死成 `\centerline{\large\bf Abstract}`，
+    # 不走 \abstractname，注入块里的 renewcommand 对它无效。
+    (re.compile(r"(\\(?:bf|bfseries)\s+)Abstract(?=\s|\})"), r"\1摘要"),
+    # NVIDIA nvidiatechreport.cls 写成 {\large\bfseries\headingfont Abstract}：
+    # \bfseries 与 Abstract 之间还隔着一个 \headingfont，上面那条匹配不到，
+    # 首页摘要标题会留英文（2501.03575 / 2602.15922 实测）。
+    (re.compile(r"(\\(?:bf|bfseries)\b\s*(?:\\[A-Za-z@]+\s*)*)Abstract(?=\s|\})"), r"\1摘要"),
     # 摘要标签：\bfseries\textit{Abstract}---（不带冒号，也不走 \abstractname）
     (re.compile(r"(\\(?:textit|textbf)\{)Abstract(\})"), r"\1摘要\2"),
     # 附录标题：\@IEEEappendixsavesection*{Appendix \* #1} 与目录条目
@@ -282,6 +318,11 @@ CLASS_LOCALIZE = [
     (re.compile(r"(\\section\*\{)(?:References|REFERENCES)(\})"), r"\1参考文献\2"),
     (re.compile(r"(\\addcontentsline\{toc\}\{section\}\{)(?:References|REFERENCES)(\})"),
      r"\1参考文献\2"),
+    # microtype 的 \DisableLigatures 只在 pdftex 下有效；XeLaTeX 会在类文件加载处
+    # 报 "Package microtype Error: Disabling ligatures of a font is only possible
+    # with pdftex version 1.30 or newer"（fairmeta.cls，2404.08471 实测 1 个错误）。
+    # 对中文排版无意义，整行注释掉；行首已有 % 时不会再匹配，天然幂等。
+    (re.compile(r"(?m)^([ \t]*)(\\DisableLigatures[^\n]*)$"), r"%\1\2"),
 ]
 
 
@@ -348,8 +389,10 @@ def resolve_inject_target(src: Path, main: str) -> tuple[str, str | None]:
 def apply_injection(text: str, recipe: dict, probe: bool,
                     found_type1: list[str] | None = None) -> tuple[str, list[str], list[str]]:
     block, removed, notes = build_injection(text, recipe, found_type1)
-    if removed:
-        text, _ = strip_packages(text, set(removed))
+    # 无条件执行：即使没有 Type1 包要摘，也要摘掉 XeTeX 不兼容的
+    # axessibility / accsupp（主文件里的 \usepackage 只有在这里才会被处理，
+    # strip_in_tree 只管被 \input 的文件）。
+    text, _ = strip_packages(text, set(removed) | XETEX_INCOMPATIBLE)
 
     if "arxiv-zh-tex: 字体与中文支持" in text:
         text = re.sub(
@@ -389,7 +432,7 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
         original, RECIPES[rid], probe=True, found_type1=tree_type1
     )
     write_text(main_path, injected)
-    touched = strip_in_tree(work, main_path, set(removed))
+    touched = strip_in_tree(work, main_path, set(removed) | XETEX_INCOMPATIBLE)
     if touched:
         notes.append("被 \\input 的文件里也摘掉了字体包：" + "、".join(touched))
 
@@ -444,7 +487,7 @@ def try_recipe(root: Path, src: Path, main: str, rid: str, keep: bool,
             read_text(zh / target), RECIPES[rid], probe=False, found_type1=tree_type1
         )
         write_text(zh / target, clean)
-        strip_in_tree(zh, zh / target, set(removed_zh))
+        strip_in_tree(zh, zh / target, set(removed_zh) | XETEX_INCOMPATIBLE)
         for name in localize_class_files(zh):
             ok(f"类文件固定标题已本地化：{name}")
         for _ in range(2):
