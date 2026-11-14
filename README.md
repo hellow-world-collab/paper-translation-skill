@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/XeLaTeX-MiKTeX%20%7C%20TeX%20Live-008080?style=flat-square" alt="XeLaTeX">
   <img src="https://img.shields.io/badge/tests-12%2F12%20passed-2ea44f?style=flat-square" alt="12/12 tests">
+  <a href="https://github.com/hellow-world-collab/paper-translation-skill"><img src="https://img.shields.io/github/stars/hellow-world-collab/paper-translation-skill?style=flat-square&label=Star&logo=github" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
@@ -36,6 +37,10 @@
 
 一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
 输出是**可重编译的中文 PDF**，外加一个「左原文 / 右译文」的页面对照网页。
+
+> ⭐ **开源地址**：<https://github.com/hellow-world-collab/paper-translation-skill>
+> 如果这个技能帮你省下了读论文的时间，欢迎去 GitHub 点个 **Star**，也欢迎提 Issue / PR。
+> 项目是 MIT 许可，仅用于个人阅读与学习，不附带任何论文全文。
 
 ## 译出来是什么样
 
