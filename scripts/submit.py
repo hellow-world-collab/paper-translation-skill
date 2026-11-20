@@ -32,7 +32,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _common import MARKER_RE, cjk_ratio, die, load_json, meta_dir  # noqa: E402
+from _common import (MARKER_RE, cjk_ratio, die, load_json, meta_dir,  # noqa: E402
+                     save_json, text_key)
 from apply import check_segment  # noqa: E402
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -87,6 +88,24 @@ def read_batch(path: Path) -> dict[str, str]:
     return items
 
 
+def check_segment_ext(seg: dict, text: str) -> str | None:
+    """apply.check_segment 的扩展版：HTML 分支还有「成对标记」要查嵌套。
+
+    `<span class="ltx_font_bold">` 这类行内标签在 HTML 分支里被拆成开/闭两个标记，
+    模型若把它们调换顺序，回填会生成坏 HTML（加粗把一个段落吃掉）。
+    这里提前拦下来，免得写到 translations.json 之后再被 apply 拒。
+    """
+    err = check_segment(seg, text)
+    if err:
+        return err
+    if seg.get("pairs"):
+        sys.path.insert(0, str(Path(__file__).parent))
+        from html_mode import pairs_ok          # 延迟导入：只在 HTML 分支用到
+        if not pairs_ok([int(x) for x in MARKER_RE.findall(text)], seg["pairs"]):
+            return "成对标记嵌套被打乱（加粗/链接会坏）"
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="批量提交并校验一批译文")
     ap.add_argument("project")
@@ -116,7 +135,7 @@ def main() -> int:
         if sid not in segs:
             errors.append((sid, "段 id 不存在（请先跑 pending.py 取本批 id）"))
             continue
-        err = check_segment(segs[sid], text)
+        err = check_segment_ext(segs[sid], text)
         if err:
             errors.append((sid, err))
             continue
@@ -152,6 +171,13 @@ def main() -> int:
         tmp = arz / "translations.json.tmp"
         tmp.write_text(json.dumps(tr, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(arz / "translations.json")
+        # 记下每段译文对应的原文指纹：HTML 分支的段 id 按出现顺序编号，
+        # 重新抽取会整体位移，没有这层校验旧译文会被套到别的段落上。
+        keys = load_json(arz / "tr_keys.json", default={}) or {}
+        for sid in batch:
+            if sid in segs:
+                keys[sid] = text_key(segs[sid]["masked"])
+        save_json(arz / "tr_keys.json", keys)
 
     # 试运行也按「若写入后」报进度，方便提交前先看还剩几批
     effective = dict(tr)
@@ -168,7 +194,9 @@ def main() -> int:
     if total - done:
         print(f"  下一批：python pending.py {root} --budget {args.budget}")
     else:
-        print("  全部译完，下一步：python apply.py <项目目录>")
+        nxt = ("python html_mode.py apply <项目目录> --pdf"
+               if data.get("engine") == "html" else "python apply.py <项目目录>")
+        print(f"  全部译完，下一步：{nxt}")
     return 0
 
 

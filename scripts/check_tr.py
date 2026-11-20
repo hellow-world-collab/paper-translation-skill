@@ -129,8 +129,13 @@ def scan(root: Path, strict: bool = False) -> dict:
 
     # 第 5 类：源文里根本没被 extract.py 抽到的英文正文。体检只比对
     # translations 与 segments，对这类漏译天然是 100% 通过；交给位置差集检查。
-    from check_coverage import scan as scan_coverage
-    uncovered = scan_coverage(root)["suspects"]
+    # HTML 分支的源码不是 .tex，位置差集没有意义，改用 html_mode.py check
+    # 的「回填后残留英文」扫描（它按 DOM 文本节点判断，比位置差集更准）。
+    if (data or {}).get("engine") == "html":
+        uncovered = []
+    else:
+        from check_coverage import scan as scan_coverage
+        uncovered = scan_coverage(root)["suspects"]
 
     total = len(segs)
     done = total - len(missing)

@@ -99,6 +99,18 @@ def meta_dir(root: Path) -> Path:
     return d
 
 
+def text_key(text: str) -> str:
+    """片段指纹：只跟内容有关，与文件位置、段落编号无关。
+
+    回填时用它确认「这条译文确实属于这一段」。HTML 分支的段 id 是按出现顺序
+    编的，重新抽取一次就会整体位移；没有这层校验，旧译文会被静默套到别的段落上。
+    """
+    import hashlib
+
+    norm = re.sub(r"\s+", " ", (text or "")).strip()
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
+
+
 def load_json(path: Path, default=None):
     path = Path(path)
     if not path.is_file():

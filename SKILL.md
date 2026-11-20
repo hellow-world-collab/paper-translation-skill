@@ -14,7 +14,7 @@ examples_en:
   - "This IEEE paper only comes as a PDF — give me a Chinese version"
   - "Then produce a side-by-side reader with working search"
 category: productivity
-version: 1.0.5
+version: 1.0.6
 author: hellow-world-collab
 visibility: "public"
 license: MIT
@@ -29,6 +29,10 @@ agent_created: true
 > 如果这个技能帮你省下了读论文的时间，欢迎去 GitHub 点个 **Star**；遇到没覆盖的模板、
 > 或有想支持的写法，也欢迎提 Issue / PR。本项目 MIT 许可，仅供个人阅读与学习使用。
 
+三条分支一句话概括：**有网页版就走 HTML（最快、不用装 TeX），有源码就走 LaTeX（最保真），
+只有 PDF 才走 PDF（版式保留）**。来源不限于 arXiv——OpenReview、bioRxiv、PMLR、CVF、
+ACL Anthology、期刊 PDF 都认，见第零步的来源表。
+
 ## 第 -1 步：环境自检（缺什么装什么，别让用户自己去折腾）
 
 动手前先跑一次：
@@ -40,6 +44,10 @@ python ~/.workbuddy/skills/arxiv-zh-tex/scripts/env_check.py    # 加 --json 给
 它逐个打勾 `xelatex` / `pdftoppm` / `pymupdf` / Python 版本，缺的连安装命令一起打印。
 **不要跳过这一步直接开编译**：Windows 上 MiKTeX 通常不在 PATH，`env_check.py` 会去常见安装位置找，
 比手敲 `xelatex --version` 可靠；退出码 1 表示缺 xelatex。
+
+> **HTML 分支不需要 xelatex**：它只用标准库 + 本机浏览器。用户只要能联网、
+> `route.py` 选中了 HTML，就不必先装 TeX（导出 PDF 时才需要 Chrome/Edge）。
+> 换句话说 `env_check.py` 报缺 xelatex 时，先看 `route.py` 判的是哪条分支，别急着装。
 
 缺 XeLaTeX 时按系统装（其余依赖的安装命令脚本会自己给出）：
 
@@ -60,7 +68,7 @@ Python 侧：渲染 HTML 要 `python -m pip install pymupdf`；PDF 分支**不�
 装完重跑 `env_check.py`，出现 ✓ 再进第零步。确实是内网、没有包管理器这种情况，
 给用户官网链接和一句手动步骤即可，不要卡在这里反复重试。
 
-## 第零步：先分流——有源码走源码，没源码走 PDF
+## 第零步：先分流——HTML 最快、源码最保真、PDF 兜底
 
 > **技能目录**：下文统一用 `~/.workbuddy/skills/arxiv-zh-tex`，这是本地 `git clone` 的默认位置。
 > 从技能市场安装时目录名可能不同（例如带 skill id），先 `ls ~/.workbuddy/skills` 确认实际目录，
@@ -68,24 +76,49 @@ Python 侧：渲染 HTML 要 `python -m pip install pymupdf`；PDF 分支**不�
 
 ```bash
 S=~/.workbuddy/skills/arxiv-zh-tex/scripts
-python $S/route.py <arXiv ID / 链接 / PDF / .tex 目录 / 压缩包>   # 只判断，打印下一步命令
+python $S/route.py <链接 / arXiv ID / PDF / .tex 目录 / 压缩包 / .html>   # 只判断，打印下一步命令
 ```
 
 | 输入 | 分支 | 产物 | 说明 |
 |---|---|---|---|
-| arXiv ID、abs/pdf 链接、`.tex` 目录、`.zip/.tar.gz` | **LaTeX**（主链） | 重新编译的中文 PDF | 质量上限最高：公式、编号、交叉引用都是真 LaTeX |
-| 只有 `.pdf`：期刊排版、扫描件、arXiv 没放源码 | **PDF** | `<论文>_中文版.pdf` + `_双语版.pdf` | 版式 1:1 保留，公式是原图；译文质量取决于翻译后端 |
+| 论文网页版（arXiv `/html`、ar5iv、bioRxiv、任意论文页、本地 `.html`） | **HTML** | 中文 HTML + 中英对照页（可选 PDF） | **最快**：公式是 MathML，不需要 TeX、不需要编译，几秒钟出页 |
+| arXiv ID、abs/pdf 链接、`.tex` 目录、`.zip/.tar.gz` | **LaTeX**（主链） | 重新编译的中文 PDF | 质量上限最高：公式、编号、交叉引用、参考文献都是真 LaTeX |
+| 只有 `.pdf`：期刊排版、扫描件、arXiv 没放源码 | **PDF** | `<论文>_中文版.pdf` + `_双语版.pdf` | 版式 1:1 保留，公式是原图 |
 
-`route.py --mode latex|pdf` 可以强制指定；`--mode auto`（默认）按上表判断。
-两条分支的最后都能接 `render_compare.py` 出双栏对照页，阅读体验一致。
+`route.py --mode auto|html|latex|pdf|best` 可以指定：`auto`（默认）按**最快可用**选
+HTML → LaTeX → PDF；`best` 按**最保真**选 LaTeX → HTML → PDF。
+
+**auto 什么时候不选 HTML**：HTML 版是出版社 / arXiv 用 LaTeXML 转的降级产物，若探测到
+参考文献整体转换失败（`ltx_missing_citation` 超过 20 处）或转换错误过多，`auto` 会退回源码重排，
+并把原因打出来。想要快就 `--mode html` 强制走——它仍然能出中文页，只是引用可能显示成
+`dreamerv3` 这样的原始键。
 
 **自动退路**：arXiv 有条目但作者只交了 PDF（`e-print` 返回 404 / "no source available"）时，
 `fetch.py` 会失败并直接把 `pdf_mode.py` 的完整命令打出来——不要停在那里问用户，
 按提示转到 PDF 分支继续。用户显式说「用 PDF 分支」时，即使有源码也照办（`--mode pdf`）。
 
-## 核心原则（LaTeX 分支）
+### 支持哪些来源
 
-**模型永远不生成 TeX 语法。** 源码被切成若干自然语言片段，公式、命令、引用、数值被替换成 `⟪P0001⟫` 这样的标记交给模型；回填时只替换片段内的文字，标记还原成原文。这样公式和结构从根本上不可能被改坏。
+| 来源 | 判定 | 走哪条 |
+|---|---|---|
+| arXiv（`abs` / `pdf` / `html` 链接、裸 ID） | `arxiv` | HTML / LaTeX / PDF 三选一 |
+| ar5iv（`ar5iv.labs.arxiv.org/html/ID`、`ar5iv.org/abs/ID`） | `ar5iv` | HTML |
+| OpenReview（`openreview.net/forum?id=…`） | `openreview` | PDF（forum 页是 JS 渲染的，抓不到正文） |
+| bioRxiv / medRxiv / chemRxiv（`/content/10.1101/…`） | `biorxiv` 等 | HTML（`.full` 页） |
+| ACL Anthology（`aclanthology.org/2024.acl-long.1/`） | `aclanthology` | PDF |
+| PMLR（`proceedings.mlr.press/v235/xxx.html`） | `pmlr` | PDF |
+| CVF Open Access（`openaccess.thecvf.com/…/html/…html`） | `cvf` | PDF |
+| NeurIPS proceedings（`papers.nips.cc/…-Abstract-Conference.html`） | `neurips` | PDF（链接由 `pdf_mode.py` 从页面里找） |
+| 任何 `.pdf` 直链 / 本地 PDF | `pdf-url` / `pdf` | PDF |
+| 任何其它论文网页、本地 `.html` | `html-url` / `html-file` | HTML（通用正文抽取） |
+| 期刊 DOI 字符串 | `doi` | 拦下并提示先换成 PDF 链接（付费墙要用户自己过） |
+
+识别逻辑集中在 `scripts/sources.py`（纯离线正则 + 本地文件系统），`route.py` 只在 arXiv 上
+做一次轻量探测确认 HTML 是否可用；`--offline` 可关掉探测。
+
+## 核心原则（LaTeX 与 HTML 分支共用）
+
+**模型永远不生成标记语法。** 源码被切成若干自然语言片段，公式、命令、引用、数值被替换成 `⟪P0001⟫` 这样的标记交给模型；回填时只替换片段内的文字，标记还原成原文。这样公式和结构从根本上不可能被改坏。HTML 分支同理——段落里的 `<math>` / `<cite>` / `<img>` 全部是标记，模型看不到一个尖括号。
 
 产出是**纯中文版**（不是中英对照）。图表内不可编辑的英文一律不译。
 
@@ -186,6 +219,60 @@ python $S/submit.py ./2508.08241 batch.tsv --dry-run
 `--budget 18000` 是实测值：2607.15036 单批 1.8 万字符能一次译完且不丢标记，
 295 段共 5 批，每批字符量稳定在 1.3–1.8 万。超过 2000 字符的长段会独占一批，
 脚本不会把段切开。若某篇公式标记特别密集，把预算降到 12000；不要退回「固定 25 段」。
+
+## HTML 分支（最快，连 TeX 都不用装）
+
+论文的网页版已经把公式转成 MathML、图片给成 URL，所以这条分支不需要编译：
+抓下来 → 按段落切 → 回填 → 出中文页。除了翻译本身，全程几秒到十几秒。
+
+```bash
+python $S/html_mode.py fetch   2509.24527 --project ./2509.24527   # ① 下载 + 清洗基线
+python $S/html_mode.py extract ./2509.24527                        # ② 按段落切段
+python $S/pending.py   ./2509.24527 --budget 18000                 # ③ 翻译（与 LaTeX 分支同一套）
+python $S/submit.py    ./2509.24527 batch.tsv
+python $S/html_mode.py apply   ./2509.24527 --pdf                  # ④ 回填 + 双语页 +（可选）PDF
+python $S/html_mode.py check   ./2509.24527                        # ⑤ 体检：缺译 / 残留英文
+```
+
+| 路径 | 内容 |
+|---|---|
+| `src/index.html` | 原始抓取，只读 |
+| `zh/index.html` | 清洗后的基线（`extract` 从这里读，`apply` 每次从它重建 `out/`） |
+| `zh/assets/` | 本地化的 CSS 与图片（CSS 里的字体地址已补成绝对，联网时仍能取到） |
+| `out/index.html` | **纯中文页面**，双击即可看，公式是 MathML、正文可划选 |
+| `html/bilingual.html` | **中英对照页**：每段中文下面跟灰字英文，右下角可切「仅中文」、调字号 |
+| `out/<标题>_中文版.pdf` | 加 `--pdf` 才生成，用本机 Chrome/Edge 无头打印（不装 TeX 也能出 PDF） |
+
+对照页**不用 iframe**：`file://` 下父页访问子页是跨源，滚动联动一定失败。改成「同一段中文在上、
+原文在下」，靠 `body.arz-bi` 控制显隐，纯 CSS 无跨域问题。
+
+### 切段规则（决定译文质量的地方）
+
+| 规则 | 为什么 |
+|---|---|
+| 以**段落**为翻译单元：`p` / `li` / `figcaption` / `td` / `h1`–`h6` / `dt` / `dd` / 叶子 `div` | 按文本节点切会把一句话从公式处劈成两半（「while using 100 / less data. It also outperforms…」） |
+| 段落里每个元素都变成 `⟪Pnnnn⟫`：`<math>`、`<cite>`、`<img>`、`<code>` 整体一个标记 | 公式与引用根本进不了模型视野 |
+| 加粗 / 斜体 / 链接（`span` `a` `em` `b`…）拆成**开、闭两个标记**并记 `pairs` | 否则 `<td><span class="ltx_font_bold">Optimization</span></td>` 整格变成标记，表头永远是英文 |
+| 回填前校验 `pairs` 的嵌套顺序 | 模型把开/闭标记调换会生成坏 HTML，宁可整段退原文 |
+| 清洗阶段拆掉 `<span class="ltx_text">` 外壳 | 这层壳会害得整段话被当成一个受保护片段 |
+| `Figure 1` / `Table 2` / `Section 3.2` / `Abstract` 这类**自动编号标签不进片段** | 回填后统一确定性本地化，避免同一篇里混出「图 1 / Figure 1」 |
+| 人名（`ltx_personname`）整块保留 | 译成「达尼贾尔·哈夫纳」反而不好认 |
+| `ltx_ERROR` 残渣、arXiv 的 license 横条与水印先删掉 | 那些不是论文内容 |
+
+### 这条链上踩过的坑（都已修）
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 题注被切成「while using 100 / less data. It also outperforms our VLA agent」 | LaTeXML 用 `<span class="ltx_text">` 把整段包起来，抽取器把这一层壳当成「受保护 HTML」整块跳过 | 清洗阶段拆掉无语义的 `span` 壳（`ltx_font_*`、`ltx_ref`、`ltx_tag` 等语义 span 保留） |
+| 表格表头、加粗小标题永远留在英文 | `<td><span class="ltx_font_bold">Optimization</span></td>` 里只有一个元素，整格变成 `⟪P0001⟫` | 行内标签改「开/闭双标记」，配合 `pairs` 嵌套校验；表头实测变「优化」 |
+| 作者名被译成中文音译 | `ltx_personname` 被当普通行内元素 | 人名整块保留，页面上照抄 Wilson Yan |
+| 页面最上方冒出 `L[1]Q[l,m,wd=#1] C[1]Q[…]` | `tabularray` 转换失败后残留的 LaTeX 参数 | 删掉正文含 `#数字` 的 `ltx_para` 整块 |
+| 引用处显示 `dreamerv3, wu2023daydreamer, hansen2023tdtmpc2` | 这篇的 HTML 参考文献整体转换失败（`ltx_missing_citation`） | **不假装能修**：`fetch` 会把缺陷数打出来，`route.py` 的 auto 据此退回 LaTeX 重排；`--mode html` 强制时如实保留 |
+| 重新抽取后旧译文被套到别的段落 | 段 id 按出现顺序编号，加了规则就整体位移 | `submit.py` 记 `tr_keys.json`（原文指纹），`apply` / `check` 对不上就跳过并报「过期译文」 |
+| `--pdf` 打出空白页 | 页面还在渲染就打印 | 传 `--virtual-time-budget=15000`；仍是空白多半是 Chrome 版本太老，网页版不受影响 |
+| 双语页左右两栏滚动不同步 | 用 iframe 分栏，`file://` 下是跨源 | 改成同段上下叠（中文在上、英文在下），纯 CSS 切换 |
+
+
 
 ## PDF 分支（只有 PDF）
 
@@ -512,10 +599,16 @@ llncs、acmart、beamer、minted、natbib+bibtex、biblatex+biber、preamble 里
 
 ## 边界
 
-- 没有源码的论文不再直接失败：`route.py` 会判成 PDF 分支，交给 `pdf_mode.py`（pdf2zh）。
-  但 PDF 分支要求有文字层；扫描件需要先 OCR。
+- 三条分支按「HTML → LaTeX → PDF」兜底：没有网页版就取源码，源码也没有才走 PDF。
+  - **HTML 分支**只能翻网页里**有的**内容。arXiv 的 HTML 只覆盖近年论文；老论文若有
+    ar5iv 版可用，没有就只能走源码或 PDF。参考文献若在转换时整体失败，页面上会留下
+    `dreamerv3` 这样的原始引用键——这是源的问题，技能不伪造参考文献。
+  - **PDF 分支**要求有文字层；扫描件需要先 OCR。
 - 不翻参考文献条目（`thebibliography` 与 `.bbl` 整体跳过）、不翻图内文字（含 `tikz`/`pgfplots`
-  节点的文字）、不翻伪代码（`algorithm` / `algorithmic` 体，仅标题译）。
+  节点的文字）、不翻伪代码（`algorithm` / `algorithmic` 体，仅标题译）。HTML 分支同理：
+  图里烧进去的英文、`<pre>` 代码块都是原样保留。
+- HTML 分支不重排版式：中文继承了原网页的单栏样式。要「原版式的中文 PDF」得走 LaTeX 分支，
+  要「原版式的双语 PDF」得走 PDF 分支或 `render_compare.py`。
 - 不自动改作者的重音宏、自定义类、参考文献格式——这些改动风险高于收益，遇到就报给用户。
 - 中文字体里没有的符号（①②、特殊箭头、emoji）会 `Missing character` 留白；`inject_cjk` 会打印条数，
   真在意就换字体栈或改源码。

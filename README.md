@@ -61,18 +61,62 @@
 - **公式不动**：模型看到的是 `⟪P0001⟫` 这样的占位标记，回填时只替换标记内的自然语言。数学符号没有机会被写坏。
 - **可以核对**：每一段译文都记着它来自哪个源片段；`audit.py` 给出页数、中文覆盖率、图表数量，`check_coverage.py` 在翻译前找出「根本没被抽到的正文」，`check_tr.py` 找出缺译和成片英文。
 
-## 两条分支
+## 三条分支
 
-| 输入 | 分支 | 产物 | 质量 |
+| 输入 | 分支 | 产物 | 特点 |
 |---|---|---|---|
-| arXiv ID / abs、pdf 链接 / `.tex` 目录 / `.zip` `.tar.gz` | **LaTeX**（主链） | 重新编译的中文 PDF | 公式、编号、交叉引用都是真 LaTeX，上限最高 |
+| 论文网页版：arXiv `/html`、ar5iv、bioRxiv、任意论文页、本地 `.html` | **HTML** | 中文 HTML + 中英对照页（可选 PDF） | **最快**：公式是 MathML，不用 TeX、不用编译 |
+| arXiv ID / abs、pdf 链接 / `.tex` 目录 / `.zip` `.tar.gz` | **LaTeX**（主链） | 重新编译的中文 PDF | 公式、编号、交叉引用都是真 LaTeX，最保真 |
 | 只有 `.pdf`：期刊排版、arXiv 没放源码 | **PDF**（pdf2zh） | `<论文>_中文版.pdf` | 版式 1:1 保留，公式是原图 |
 
-`route.py` 负责判断走哪条；`--mode latex|pdf` 可以强制指定。
-两条分支最后都能接 `render_compare.py` 出双栏对照页。
+`route.py` 负责判断走哪条。默认 `--mode auto` **按最快可用选**：有网页版就走 HTML，
+否则取源码，再不行才走 PDF；`--mode best` 反过来按最保真选（LaTeX → HTML → PDF），
+`--mode html|latex|pdf` 可以强制指定。
+
+**来源不止 arXiv**：OpenReview、bioRxiv / medRxiv、ACL Anthology、PMLR、CVF Open Access、
+NeurIPS proceedings、任何 `.pdf` 直链或论文网页都能认，识别规则在 `scripts/sources.py`。
 
 > **PDF 分支不是 OCR。** 它读的是 PDF 的文字层（矢量文本 + 位置），逐块翻译后按原 bbox
 > 覆盖回去。扫描件（纯图片 PDF）没有文字层，必须先做 OCR——不在本技能范围内。
+
+## HTML 分支：连 TeX 都不用装
+
+论文的网页版已经把公式转成 MathML、图片给成 URL，所以这条分支不编译、不注字体、不跑三遍
+试探：抓下来 → 按段落切 → 回填，几秒钟出中文页。适合「先快速读完再决定要不要精修」，
+也适合根本不想装 TeX 的机器。
+
+![HTML 分支的中英对照页：每段中文下面跟灰字原文，右下角可切「仅中文」](docs/images/showcase-html-bilingual.png)
+
+<p align="center">
+  <sub>Dreamer 4（arXiv 2509.24527）的 HTML 分支产出：标题、摘要、图注都已回填，
+  每段中文下方是同段英文原文；<code>图 1：</code> 这类编号标签是确定性本地化的，不靠模型。
+  截图未经修饰。</sub>
+</p>
+
+```bash
+S=~/.workbuddy/skills/arxiv-zh-tex/scripts
+python $S/html_mode.py fetch   2509.24527 --project ./2509.24527   # 下载 + 清洗基线
+python $S/html_mode.py extract ./2509.24527                        # 按段落切段
+python $S/pending.py   ./2509.24527 --budget 18000                 # 翻译（与 LaTeX 分支同一套）
+python $S/submit.py    ./2509.24527 batch.tsv
+python $S/html_mode.py apply   ./2509.24527 --pdf                  # 中文页 + 双语页 +（可选）PDF
+python $S/html_mode.py check   ./2509.24527                        # 体检
+```
+
+跑完有两个成品：
+
+- `out/index.html` —— 纯中文页面。双击就能看，公式是 MathML（浏览器原生渲染，任何缩放都清晰），
+  正文可划选复制。
+- `html/bilingual.html` —— 中英对照页。每段中文下面跟灰字原文，右下角可切「仅中文」、调字号。
+  用的是「同段上下叠」而不是左右两栏：`file://` 下 iframe 是跨源，滚动联动一定失败。
+
+加 `--pdf` 会用本机 Chrome / Edge 无头打印一份 PDF，所以**没装 TeX 也能拿到可发人的中文 PDF**
+（实测 98 段的论文出来 14 页、2.5 MB，中文可搜可复制）。
+
+**HTML 分支的取舍**：它是出版社 / arXiv 用 LaTeXML 转出来的降级产物。绝大多数论文没问题，
+但有些论文的参考文献会整体转换失败（页面上只剩 `dreamerv3` 这样的原始引用键），
+或者个别命令转不出来。`fetch` 会把这类缺陷数打出来并给警告，`route.py` 的 `auto` 因此会在
+这种论文上**退回源码重排**——要快就 `--mode html` 强制走。
 
 ## 对照页
 
@@ -128,12 +172,14 @@
 
 ```mermaid
 flowchart TD
-    A["arXiv ID / .tex 目录 / PDF"] --> R{"route.py"}
+    A["论文链接 / ID / .tex / 网页 / PDF"] --> R{"route.py"}
+    R -->|"HTML（最快）"| H["fetch → extract<br/>翻译 → apply"]
     R -->|LaTeX| L["fetch → inject → extract<br/>翻译 → apply → build"]
     R -->|PDF| P["pdf2zh 逐块覆盖"]
-    L --> O["中文 PDF"]
-    P --> O
-    O --> C["render_compare 双栏对照页"]
+    H --> O["中文 HTML + 双语页<br/>（可选 Chrome 打印 PDF）"]
+    L --> O2["中文 PDF"]
+    P --> O2
+    O2 --> C["render_compare 双栏对照页"]
 ```
 
 ## 安装
@@ -188,8 +234,15 @@ S=~/.workbuddy/skills/arxiv-zh-tex/scripts
 # 0) 先分流
 python $S/route.py 2508.08241                    # 打印判定结果和下一步命令
 
-# 1) LaTeX 分支
-python $S/fetch.py          2508.08241 --out ./2508.08241
+# 1) HTML 分支（最快，不需要 TeX）
+python $S/html_mode.py fetch   2508.08241 --project ./2508.08241-html
+python $S/html_mode.py extract ./2508.08241-html
+#      ↓ 翻译：pending.py → batch.tsv → submit.py（与下面 LaTeX 分支完全一样）
+python $S/html_mode.py apply   ./2508.08241-html --pdf
+python $S/html_mode.py check   ./2508.08241-html
+
+# 2) LaTeX 分支（要原版式中文 PDF 时）
+python $S/fetch.py          2508.08241 --out ./2508.08241-latex
 python $S/preflight.py      ./2508.08241
 python $S/inject_cjk.py     ./2508.08241
 python $S/extract.py        ./2508.08241
@@ -209,7 +262,7 @@ python $S/render_compare.py --root ./2508.08241 \
     --out html/compare
 # 需要「一个文件发给别人」才加 --single-file "论文_双栏对照.html"
 
-# 2) PDF 分支（没有源码 / 用户指定）
+# 3) PDF 分支（没有源码 / 用户指定）
 python $S/pdf_mode.py 论文.pdf --project ./论文 --compare
 python $S/pdf_mode.py https://arxiv.org/pdf/2509.09674 --project ./x --compare
 python $S/pdf_mode.py 论文.pdf --project ./x --check      # 只体检，不翻译
@@ -227,7 +280,9 @@ python ~/.workbuddy/skills/arxiv-zh-tex/tests/run_compat.py --full
 SKILL.md                 技能主文档（流程、命令、踩坑表）
 glossary.tsv             术语表：建议译名（可按论文语境偏离，不是硬约束）
 scripts/
-  route.py               第零步：判断 LaTeX / PDF 分支
+  route.py               第零步：判断 HTML / LaTeX / PDF 分支（auto=最快，best=最保真）
+  sources.py             来源识别：arXiv / OpenReview / bioRxiv / PMLR / CVF / ACL / DOI…
+  html_mode.py           HTML 分支：抓网页 → 按段落切 → 回填 → 中文页 + 双语页
   fetch.py               取源码（e-print）、认主文件 → manifest.json
   preflight.py           基线编译 + xetex 探测
   inject_cjk.py          注入中文字体（带哨兵验证）
@@ -265,7 +320,8 @@ tests/
 
 | 组件 | 用途 | 缺了会怎样 |
 |---|---|---|
-| **XeLaTeX**（TeX Live / MiKTeX） | 编译中文 PDF，LaTeX 分支的核心 | 直接跑不了 |
+| **XeLaTeX**（TeX Live / MiKTeX） | 编译中文 PDF，**只有 LaTeX 分支需要** | LaTeX 分支跑不了（HTML / PDF 分支不受影响） |
+| Chrome / Edge | HTML 分支加 `--pdf` 时打印 PDF | 只是不出 PDF，网页版照样能用 |
 | `pdftoppm`（poppler） | 审计出图、双栏对照页 | 能编译，图出不来 |
 | `pymupdf` | 渲染 HTML 阅读页 | 只影响 HTML，不影响 PDF |
 | Python **3.10–3.12** | PDF 分支（`pdf2zh` 要求 `<3.13`） | 3.13 装不上，要单独建环境 |
@@ -325,6 +381,10 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 **不翻的**：公式、图内文字（`tikz`/`pgfplots` 整体跳过）、伪代码、`\verb`、
 参考文献条目，以及 `\label` / `\cite` / `\ref` / `\includegraphics` 等命令参数。
 
+HTML 分支的边界一致：段落、标题、题注、表格单元格会翻；`<math>`（MathML）、`<pre>`、
+`<cite>`、图里的文字、作者人名都原样保留。**`Figure 1` / `Table 2` / `Abstract` 这类自动
+编号标签不交给模型**，回填后统一本地化，所以同一篇里不会出现「图 1 / Figure 1」混排。
+
 ## 已验证的真实论文
 
 | 论文 | 分支 | 结果 |
@@ -334,6 +394,8 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 | 2508.08241 *BeyondMimic* | LaTeX | Science 模板（`sciencemag.bst` + 11 张图）：字体注入复跑 A1 / 0 错误 / 59 页；项目里另有早前产出的 54 页中文版 |
 | 2603.09460v2 *SEA-Nav* | LaTeX | ieeeconf 双栏：8 页原文 → 7 页中文，0 错误 / 0 溢出；图 1、表 I–V、摘要、附录、参考文献标题全中文；双栏对照页经 Chrome CDP 真实验收 |
 | 2611.11605 *ScanDreamer* | LaTeX | IEEEtran 双栏：8 页原文 → 8 页中文，0 错误 / 0 缺字；2 张跨栏宽表 + 17 个 ✓ 全部到位；首次从零端到端实测 18′45″（源码落盘 00:39:19 → 交付 PDF 00:58:05，含 2 次现场修 bug 与重编译；扣除返工约 14′）；对照页 CDP 验收 16 canvas / 3435 span / 0 JS 错误 |
+| 2509.24527 *Dreamer 4* | **HTML** | 网页版 118 KB → 98 个可译段落（240 个受保护片段）；回填后 `out/index.html` + `html/bilingual.html`；Chrome 无头打印 14 页中文 PDF，页面中文可搜；图注标签、章节号全部本地化为「图 1：」「1. 引言」 |
+| 2602.15922 *DreamZero* | **HTML** | 456 KB 网页版 → 546 段（含 218 个表格单元格）；验证「整格只有一个加粗 span」的表头也能正常进翻译、回填后仍是粗体中文 |
 | 2610.31617 *DiffDreamer* | LaTeX | IEEEtran 双栏（toplevel 为纯 `\input` 兼容壳）：8 页原文 → 7 页中文，0 错误 / 0 溢出 / 0 缺字；90 段 2 批、17 个书签锚点；定稿前实战复核又修出 3 个边界问题（兼容壳注入、hypersetup 误报、`\mathbf{\Omega}` 空白）；端到端 23′（含 3 次现场修复，扣除约 14′）；对照页 CDP 15 canvas / 2301 span / 0 JS 错误 |
 
 ### 批量实战：9 篇「世界模型 → WAM」
@@ -361,6 +423,13 @@ sudo apt install texlive-xetex texlive-lang-chinese texlive-latex-extra latexmk 
 
 ## 已知限制
 
+- **HTML 版是降级产物**：参考文献可能在 LaTeXML 转换时整体失败（页面上只剩 `dreamerv3`
+  这样的引用键），个别命令也会转不出来。`fetch` 会打印缺陷数，`route.py` 的 `auto`
+  据此退回源码重排；`--mode html` 强制时如实保留，不伪造内容。
+- **HTML 分支不重排版式**：继承原网页的单栏样式。要原版式中文 PDF 用 LaTeX 分支，
+  要原版式双语 PDF 用 PDF 分支或 `render_compare.py`。
+- **HTML 分支只覆盖近年论文**：arXiv 的 HTML 版从 2023 年底开始有；老论文可以用
+  ar5iv 的地址，再没有就只能走源码或 PDF。
 - **扫描件**：没有文字层，PDF 分支抽不出块 → 先 OCR。
 - **图内文字**：烧进位图的英文不译（要译得重画图）；`tikz`/`pgfplots` 整块跳过，
   图里的 `\node {Text}` 也是英文。

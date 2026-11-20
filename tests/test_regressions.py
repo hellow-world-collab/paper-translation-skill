@@ -370,6 +370,175 @@ check("同时覆盖 algorithm 宏包的 algorithm 类型",
 check("不动 equation（作者可能主动去掉公式标签）",
       "\\crefname{equation}" not in inj_src)
 
+
+print("\n⑰ 新增 HTML 分支：来源识别（不止 arXiv）")
+from sources import resolve  # noqa: E402
+
+cases = [
+    ("2509.24527", "arxiv", "latex"),
+    ("https://arxiv.org/abs/2509.24527v1", "arxiv", "latex"),
+    ("https://arxiv.org/html/2509.24527v1", "arxiv", "latex"),
+    ("https://openreview.net/forum?id=BZ5a1r-kVsf", "openreview", "pdf"),
+    ("https://aclanthology.org/2024.acl-long.1/", "aclanthology", "pdf"),
+    ("https://proceedings.mlr.press/v235/foo24a.html", "pmlr", "pdf"),
+    ("https://www.biorxiv.org/content/10.1101/2023.01.01.522000v1", "biorxiv", "html"),
+    ("https://ar5iv.labs.arxiv.org/html/1803.10122", "ar5iv", "html"),
+    ("https://example.com/paper/page.html", "html-url", "html"),
+    ("https://example.com/paper.pdf", "pdf-url", "pdf"),
+]
+for src, kind, hint in cases:
+    r = resolve(src)
+    check(f"{src[:46]:<48} → {kind}/{hint}",
+          r["kind"] == kind and r["mode_hint"] == hint, f"{r['kind']}/{r['mode_hint']}")
+check("OpenReview 给的是官方 PDF 直链",
+      resolve("https://openreview.net/forum?id=abc").get("pdf_url")
+      == "https://openreview.net/pdf?id=abc")
+check("bioRxiv 同时给出 .full 与 .full.pdf",
+      resolve("https://www.biorxiv.org/content/10.1101/2023.01.01.522000v1").get("html_url")
+      .endswith(".full"))
+
+print("\n⑱ 自动选路：auto=最快、best=最保真、HTML 降级时回退")
+import shutil  # noqa: E402
+import route as R  # noqa: E402
+import sources as S  # noqa: E402
+
+real_probe = S.probe_html
+try:
+    S.probe_html = lambda url, timeout=20: {"ok": True, "bytes": 1000, "missing_citation": 0,
+                                            "error_span": 0, "degraded": False}
+    d = R.decide(S.resolve("2509.24527"), "auto")
+    check("auto：HTML 可用就走 HTML（最快）", d["mode"] == "html", d["reason"][:40])
+    d = R.decide(S.resolve("2509.24527"), "best")
+    check("best：有源码就走 LaTeX（最保真）", d["mode"] == "latex", d["reason"][:40])
+
+    S.probe_html = lambda url, timeout=20: {"ok": True, "bytes": 1000, "missing_citation": 67,
+                                            "error_span": 3, "degraded": True}
+    d = R.decide(S.resolve("2509.24527"), "auto")
+    check("auto：HTML 缺参考文献时退回源码重排", d["mode"] == "latex", d["reason"][:50])
+    d = R.decide(S.resolve("2509.24527"), "html")
+    check("--mode html 仍然可以强行用 HTML", d["mode"] == "html" and not d.get("blocked"))
+
+    S.probe_html = lambda url, timeout=20: {"ok": False, "why": "HTTP 404"}
+    d = R.decide(S.resolve("2509.24527"), "auto")
+    check("auto：没有 HTML 版时退回源码重排", d["mode"] == "latex", d["reason"][:40])
+    d = R.decide(S.resolve("2509.24527"), "html")
+    check("--mode html 但 arXiv 没有 HTML 版 → 明确拦下", d.get("blocked") is True)
+
+    S.probe_html = lambda url, timeout=20: {"ok": True, "bytes": 9, "missing_citation": 0,
+                                            "error_span": 0, "degraded": False}
+    d = R.decide(S.resolve("2509.24527"), "auto", offline=True)
+    check("--offline 不联网探测，按经验走 LaTeX", d["mode"] == "latex" and d["probe"] is None)
+finally:
+    S.probe_html = real_probe
+
+check("OpenReview 不管 auto 还是 best 都只能走 PDF",
+      all(R.decide(S.resolve("https://openreview.net/forum?id=x"), m)["mode"] == "pdf"
+          for m in ("auto", "best")))
+_tmp_pdf = Path(tempfile.mkdtemp(prefix="arz-pdf-")) / "paper.pdf"
+_tmp_pdf.write_bytes(b"%PDF-1.4\n")
+check("本地 PDF 直走 PDF 分支",
+      R.decide(S.resolve(str(_tmp_pdf)), "auto")["mode"] == "pdf")
+shutil.rmtree(_tmp_pdf.parent, ignore_errors=True)
+
+print("\n⑲ HTML 分支：标签本地化、段落切分、成对标记")
+from html_mode import (carve, localize_label, pairs_ok, scan,  # noqa: E402
+                       unmask_html, _clean_doc, _passes)
+
+for src, want in [("Figure 1", "图 1"), ("Figure 1:", "图 1："), ("Table 3", "表 3"),
+                  ("Section 3.2", "第 3.2 节"), ("Algorithm 2", "算法 2"),
+                  ("Abstract", "摘要"), ("References", "参考文献"), ("Eq. (7)", "式 (7)"),
+                  ("Appendix A", "附录 A"), ("Proof", "证明")]:
+    check(f"标签 {src!r} → {want}", localize_label(src) == want, str(localize_label(src)))
+for src in ("Figure 1 shows the result", "Dreamer 4", "1. Introduction"):
+    check(f"不是标签：{src!r}", localize_label(src) is None, str(localize_label(src)))
+
+mini = """<body><div class="ltx_page_main"><article class="ltx_document">
+<h1 class="ltx_title ltx_title_document">Paper Title</h1>
+<div class="ltx_para"><p class="ltx_p">We train models on <math alttext="x"><mi>x</mi></math>
+with <span class="ltx_text ltx_font_bold">bold name</span> here &amp; there.</p></div>
+<figure><figcaption class="ltx_caption"><span class="ltx_tag ltx_tag_figure">Figure 1</span>: A caption sentence.</figcaption></figure>
+</article></div></body>"""
+
+info = scan(mini)
+p_block = [b for b in info["blocks"] if b["tag"] == "p"][0]
+toks = info["tokens"]
+import bisect  # noqa: E402
+starts = [t["start"] for t in toks]
+masked, prot, pairs = carve(mini, toks,
+                            bisect.bisect_left(starts, p_block["start"]),
+                            bisect.bisect_left(starts, p_block["end"]))
+check("整段变成一个片段（公式不再把句子切断）",
+      masked.startswith("We train models on ⟪P0001⟫"), masked[:60])
+check("公式整体受保护", any("<math" in p for p in prot))
+check("加粗拆成开/闭两个标记", pairs == [[2, 3]], str(pairs))
+check("加粗标签本身受保护", any("ltx_font_bold" in p for p in prot))
+check("实体还原成字符后交给模型", "& there" in masked, masked[-20:])
+
+check("成对标记正确嵌套 → 通过", pairs_ok([1, 2, 3, 4], [[2, 3]]))
+check("开闭调换顺序 → 拒绝", not pairs_ok([1, 3, 2, 4], [[2, 3]]))
+check("只留一个 → 拒绝（缺标记已由 check_segment 拦）",
+      not pairs_ok([1, 2, 4], [[2, 3]]))
+
+out = unmask_html("模型⟪P0001⟫A &amp; B⟪P0002⟫ & <值>", ["<math>x</math>", ""])
+check("回填只转义模型写的文字，不碰受保护 HTML",
+      "<math>x</math>" in out and "&amp;" in out and "&lt;值&gt;" in out, out)
+
+for text, ok in [("Figure 1", False), ("(a)", False), ("L[1]Q[l,m,wd=#1]", False),
+                 ("Ours", True), ("PPO", False), ("The model predicts the future.", True)]:
+    check(f"_passes({text!r}) == {ok}", _passes(text, "cell" if len(text) < 12 else "body") is ok)
+
+doc = """<body><div id="infobox" class="infobox"><a>License: arXiv.org</a></div>
+<p class="ltx_p">Text <span class="ltx_text" style="font-size:90%">inner words</span>尾.</p>
+<p class="ltx_p"><span class="ltx_text ltx_font_bold">Bold</span> stays.</p></body>"""
+clean = _clean_doc(doc)
+check("拆掉无语义 span 外壳、保留语义 span",
+      'class="ltx_text"' not in clean and "ltx_font_bold" in clean, clean[:120])
+check("删掉出版社套壳（infobox）", "infobox" not in clean)
+
+print("\n⑳ HTML 分支：端到端（切段 → 回填 → 双语页）")
+import re  # noqa: E402
+import shutil  # noqa: E402
+import html_mode as HM  # noqa: E402
+
+proj = Path(tempfile.mkdtemp(prefix="arz-html-"))
+(proj / "zh").mkdir()
+(proj / "zh" / "index.html").write_text(mini, encoding="utf-8")
+HM.extract(proj)
+segdata = json.loads((proj / ".arz" / "segments.json").read_text(encoding="utf-8"))
+check("抽取按段落切出 3 段（标题 / 正文 / 题注）", len(segdata["segments"]) == 3,
+      str([s["role"] for s in segdata["segments"]]))
+def fake_zh(masked: str) -> str:
+    """只把标记之间的英文换掉：⟪P0001⟫ 里的 P0001 不能被当成英文单词。"""
+    parts = re.split(r"(⟪P\d{4,}⟫)", masked)
+    return "".join(p if p.startswith("⟪") else re.sub(r"[A-Za-z]+", "文字", p)
+                   for p in parts)
+
+
+fake = {s["id"]: fake_zh(s["masked"]) for s in segdata["segments"]}
+(proj / ".arz" / "translations.json").write_text(
+    json.dumps(fake, ensure_ascii=False), encoding="utf-8")
+HM.apply(proj, bilingual=True)
+out_doc = (proj / "out" / "index.html").read_text(encoding="utf-8")
+check("中文写回页面", "文字" in out_doc)
+check("加粗 span 与公式都还在",
+      "ltx_font_bold" in out_doc and "<math" in out_doc)
+check("题注标签本地化成「图 1」+ 全角冒号",
+      "图 1" in out_doc and "： 文字" in out_doc,
+      out_doc[out_doc.find("figcaption"):][:150])
+check("双语页生成且含英文原文层", (proj / "html" / "bilingual.html").is_file()
+      and "arz-en" in (proj / "html" / "bilingual.html").read_text(encoding="utf-8"))
+check("中文页不含英文原文层", 'class="arz-en"' not in out_doc)
+
+# 段落 id 是按出现顺序编的，重新抽取会整体位移。译文指纹对不上时必须跳过，
+# 否则 A 段的中文会被写进 B 段（这类错配肉眼很难发现）。
+second = segdata["segments"][1]["id"]
+(proj / ".arz" / "tr_keys.json").write_text(
+    json.dumps({second: "deadbeefdeadbeef"}, ensure_ascii=False), encoding="utf-8")
+r2 = HM.apply(proj, bilingual=False)
+check("指纹对不上的旧译文不会被套到别的段上",
+      r2["stale"] == 1 and r2["applied"] == 2, str(r2))
+shutil.rmtree(proj, ignore_errors=True)
+
 print("\n" + ("全部通过" if all(RESULTS) else f"{RESULTS.count(False)} 项失败"),
       f"({sum(RESULTS)}/{len(RESULTS)})")
 sys.exit(0 if all(RESULTS) else 1)
