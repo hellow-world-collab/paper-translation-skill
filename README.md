@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/XeLaTeX-MiKTeX%20%7C%20TeX%20Live-008080?style=flat-square" alt="XeLaTeX">
   <img src="https://img.shields.io/badge/tests-12%2F12%20passed-2ea44f?style=flat-square" alt="12/12 tests">
+  <img src="https://img.shields.io/github/v/release/hellow-world-collab/paper-translation-skill?style=flat-square&label=release&color=8957e5" alt="Release">
   <a href="https://github.com/hellow-world-collab/paper-translation-skill"><img src="https://img.shields.io/github/stars/hellow-world-collab/paper-translation-skill?style=flat-square&label=Star&logo=github" alt="GitHub stars"></a>
 </p>
 
@@ -35,11 +36,14 @@
   逐页对照、按节自动对齐；页面由 pdf.js 现渲，搜 <code>model</code> 双栏共 141 处命中。截图未经修饰。</i></sub>
 </p>
 
-一个 WorkBuddy / Claude Skill 形态的工程化流水线：输入是 arXiv ID、`.tex` 目录或一份 PDF，
-输出是**可重编译的中文 PDF**，外加一个「左原文 / 右译文」的页面对照网页。
+一个 **WorkBuddy 技能**（也兼容 Claude Code、Codex 等读取 `SKILL.md` 的 agent）形态的工程化流水线：
+根目录的 `SKILL.md` 就是交给 Agent 的操作说明，仓库里其余部分是它调用的脚本。
+输入是论文链接 / ID、`.tex` 目录、HTML 页面或一份 PDF，输出是**可重编译的中文 PDF**
+或**中文 HTML**，外加一个「左原文 / 右译文」的对照网页。
 
 > ⭐ **开源地址**：<https://github.com/hellow-world-collab/paper-translation-skill>
-> 如果这个技能帮你省下了读论文的时间，欢迎去 GitHub 点个 **Star**，也欢迎提 Issue / PR。
+> 如果这个技能帮你省下了读论文的时间，欢迎去 GitHub 点个 **Star**（右上角 Watch → Releases
+> 也能收到新版本通知），也欢迎提 Issue / PR。
 > 项目是 MIT 许可，仅用于个人阅读与学习，不附带任何论文全文。
 
 ## 译出来是什么样
@@ -134,15 +138,33 @@ flowchart TD
 
 ## 安装
 
+这是一个 **WorkBuddy / Claude Code 技能**（`SKILL.md` 在仓库根目录，技能名 `arxiv-zh-tex`），
+装进 skills 目录后 Agent 会自动在「用户发来论文、要中文版」时加载它。
+
+**一条命令装好**（推荐，`skills` CLI 会读根目录的 `SKILL.md`，目录名自动取 `name` 字段，
+也就是 `arxiv-zh-tex`，和下文所有路径对得上）：
+
+```bash
+npx skills add hellow-world-collab/paper-translation-skill      # 项目级
+npx skills add hellow-world-collab/paper-translation-skill -g   # 用户级（全项目可用）
+```
+
+装完在 `.claude/skills/arxiv-zh-tex`（Claude Code）或你选定的 agent 目录下。
+注意这条命令是**复制**而不是软链，仓库更新后要重跑一次才会同步。
+
+不用 `npx` 也可以直接 clone，**目录名必须是 `arxiv-zh-tex`**——SKILL.md 里的命令按这个路径写：
+
 ```bash
 git clone https://github.com/hellow-world-collab/paper-translation-skill.git \
   ~/.workbuddy/skills/arxiv-zh-tex
 ```
 
-**目录名必须是 `arxiv-zh-tex`**——SKILL.md 里的命令按这个路径写。Claude Code 用户把
-`~/.workbuddy/skills` 换成 `~/.claude/skills` 即可。
+WorkBuddy 用 `~/.workbuddy/skills`，Claude Code 用 `~/.claude/skills`，换成对应目录即可。
+clone 的好处是 `git pull` 就能更新。
 
 LaTeX 分支除了 XeLaTeX 没有别的依赖；没装的话 Agent 会先自检、按你的系统装好（见下文「依赖」）。
+**只想翻 arXiv / OpenReview 的 HTML 版、不装 TeX 也可以**——`route.py` 会自动选中不需要编译的
+HTML 分支。
 PDF 分支要单独建环境（几百 MB，只建一次）：
 
 ```bash

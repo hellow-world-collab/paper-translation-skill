@@ -2,9 +2,9 @@
 name: arxiv-zh-tex
 display_name: arXiv 论文中译
 display_name_en: arXiv Paper Chinese Translator
-description: "把论文翻成中文并尽量保持原排版。有 LaTeX 源码（arXiv 链接/ID、.tex 目录、压缩包）时走源码重排，公式、图表、引用、参考文献原位不动；只有 PDF（期刊版、扫描件、arXiv 未给源码）时自动切到 PDF 分支（pdf2zh），逐块覆盖文字层、保留版式与公式。两种分支都能再产出「左原文 / 右译文」的双栏对照 HTML。开源地址 https://github.com/hellow-world-collab/paper-translation-skill ，觉得好用欢迎点个 Star ⭐。"
-description_zh: "把 arXiv 论文翻成中文且尽量不动原排版：有 LaTeX 源码走源码重排，公式、图表、引用原位保留；只有 PDF 走版式保留翻译；另出可搜索的双栏对照页。需本机装 XeLaTeX。项目开源在 https://github.com/hellow-world-collab/paper-translation-skill ，有用的话求个 Star ⭐。"
-description_en: "Translate arXiv papers into Chinese while keeping the original layout, via LaTeX source rebuild or layout-preserving PDF translation, plus a searchable side-by-side reader. Requires a local XeLaTeX install. Open source at https://github.com/hellow-world-collab/paper-translation-skill — a Star is much appreciated!"
+description: "用户发来论文链接/ID（arXiv、OpenReview、bioRxiv、PMLR、CVF、期刊 DOI）、论文 PDF、HTML 页面或 LaTeX 源码，要中文版 / 中英对照 / 中文 PDF 时使用。有 LaTeX 源码走源码重排（公式、图表、引用、参考文献原位不动）；有 HTML 走免编译的 HTML 分支（最快、不需要 TeX）；只有 PDF 走版式保留的 PDF 分支。三条分支都能再产出「左原文 / 右译文」双栏对照页。"
+description_zh: "把论文翻成中文且尽量不动原排版：优先 LaTeX 源码重排，其次 HTML 免编译分支，只有 PDF 时走版式保留翻译；另出可搜索的双栏对照页。支持 arXiv / OpenReview / bioRxiv / PMLR / CVF / 期刊 PDF。"
+description_en: "Translate papers into Chinese while keeping the original layout. LaTeX source rebuild when available, a no-compile HTML branch for arXiv/OpenReview/publisher HTML, and layout-preserving PDF translation as fallback — plus a searchable side-by-side reader. Works beyond arXiv: OpenReview, bioRxiv, PMLR, CVF, journal PDFs."
 examples_zh:
   - "把 arXiv 2509.09674 翻成中文，公式和排版别动"
   - "这篇 IEEE 双栏论文只有 PDF，帮我出个中文版"
