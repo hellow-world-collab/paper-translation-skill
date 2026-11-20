@@ -232,6 +232,8 @@ def main() -> int:
     ap.add_argument("--thread", type=int, default=4)
     ap.add_argument("--python", default=None, help="指定 Python 解释器（需能 import pdf2zh）")
     ap.add_argument("--compare", action="store_true", help="产出后直接生成双栏对照页")
+    ap.add_argument("--single-file", action="store_true",
+                    help="额外生成单文件版对照页（约等于两份 PDF 之和 ×4/3，默认不生成）")
     ap.add_argument("--title", default="")
     ap.add_argument("--check", action="store_true", help="只体检，不翻译")
     ap.add_argument("--install", action="store_true", help=f"在 .venv-pdf 里装 {PINNED}")
@@ -367,7 +369,7 @@ def main() -> int:
 
     # ---- 8. 对照页 ----
     if args.compare:
-        rc2, out2 = run([
+        compare_cmd = [
             sys.executable, str(Path(__file__).parent / "render_compare.py"),
             "--root", str(project),
             "--original", str(original),
@@ -375,8 +377,12 @@ def main() -> int:
             "--out", str(project / "html" / "compare"),
             "--title", args.title or pdf.stem,
             "--sub", "PDF 分支 · 左原文 / 右译文",
-            "--single-file", str(project / f"{pdf.stem}_双栏对照.html"),
-        ], timeout=1800)
+        ]
+        # 单文件版体积约等于两份 PDF 之和 ×4/3（22 MB 的期刊版会到 62 MB），
+        # 默认只出目录版；确实要发给别人时再显式加 --single-file。
+        if args.single_file:
+            compare_cmd += ["--single-file", str(project / f"{pdf.stem}_双栏对照.html")]
+        rc2, out2 = run(compare_cmd, timeout=1800)
         print(out2.strip()[-600:])
         if rc2 != 0:
             warn("对照页生成失败，PDF 本身没受影响")

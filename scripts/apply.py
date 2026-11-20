@@ -78,6 +78,28 @@ def relax_float_tail(text: str) -> tuple[str, int]:
     return FLOAT_TAIL_VSKIP.sub(repl, text), count
 
 
+# 手写摘要标签：有些模板不用 \begin{abstract}，而是直接写
+# \begin{center}\bfseries \n Abstract \n\end{center}（2301.04104 实测）。
+# 单个词的独立行被抽取器按「正文至少两个英文词」跳过，中文 PDF 首页会留英文。
+# 只在 center 环境里替换独立成行的 Abstract，不碰 \section{Abstract} 之类结构。
+CENTER_ENV = re.compile(r"\\begin\{center\}.*?\\end\{center\}", re.S)
+CENTER_ABSTRACT = re.compile(r"(?m)^([ \t]*)Abstract[ \t]*$")
+
+
+def localize_center_labels(text: str) -> tuple[str, int]:
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        block = m.group(0)
+        new = CENTER_ABSTRACT.sub(lambda x: x.group(1) + "摘要", block)
+        if new != block:
+            count += 1
+        return new
+
+    return CENTER_ENV.sub(repl, text), count
+
+
 def unmask(translated: str, protected: list[str]) -> str:
     def repl(m):
         idx = int(m.group(1)) - 1
@@ -161,7 +183,7 @@ def main():
             f"  python {Path(__file__).resolve().parent / 'extract.py'} {root} --force\n"
             "译文按 id 保存，重新抽取不会丢。")
 
-    applied = skipped = unchanged = relaxed_total = 0
+    applied = skipped = unchanged = relaxed_total = labels_total = 0
     issues: list[dict] = []
 
     for rel, items in by_file.items():
@@ -195,6 +217,8 @@ def main():
 
         text, relaxed = relax_float_tail(text)
         relaxed_total += relaxed
+        text, labels = localize_center_labels(text)
+        labels_total += labels
 
         if text != original and not args.dry_run:
             write_text(path, text)
@@ -209,6 +233,8 @@ def main():
         print(f"  与原样相同 {unchanged}（视为不译）")
     if relaxed_total:
         print(f"  浮动体负间距置零 {relaxed_total} 处（中文题注变长时防止正文压住题注）")
+    if labels_total:
+        print(f"  center 环境内手写 Abstract 本地化为「摘要」 {labels_total} 处")
 
     if issues:
         print("\n  校验未通过（已保留原文，需人工处理）：")

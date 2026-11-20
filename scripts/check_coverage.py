@@ -115,6 +115,13 @@ MATH_PAIRS = [
 COMMENT = re.compile(r"(?<!\\)%.*$", re.M)
 CMD_HEAD = re.compile(r"\\([A-Za-z@]+|.)")
 
+# 等宽字体里的程序标识符：\texttt{craft\_crafting\_table}、\texttt{mine\_log}
+# 这类任务 ID / 变量名本来就不该译；把 \_ 抹成空格后反而拼出
+# 「craft crafting table」这种成片英文，2509.24527 的 Minecraft 任务表实测误报 6 处。
+# 只认带转义下划线的整参数，不会误伤 \texttt{learning rate} 之类自然语言。
+CODE_IDENT = re.compile(
+    r"\\(?:texttt|textrm|textsf|mbox|lstinline)\s*\{[^{}]*\\_[^{}]*\}")
+
 
 def read_balanced(s: str, i: int) -> int:
     """i 指向 { 或 [，返回配对右括号之后的位置（含）；处理嵌套。"""
@@ -141,6 +148,7 @@ def strip_tex(chunk: str) -> str:
     """把 chunk 里的命令名、非正文参数、公式、注释去掉，只留可能印到纸上的文字。"""
     s = COMMENT.sub(" ", chunk)
     s = CODE_BLOCK.sub(" ", s)
+    s = CODE_IDENT.sub(" ", s)
     s = TABULAR_SPEC.sub(" ", s)
     for pat in MATH_PAIRS:
         s = pat.sub(" ", s)

@@ -253,6 +253,22 @@ def build_injection(text: str, recipe: dict,
     lines.append("    \\ifdefined\\checkmark\\renewcommand{\\checkmark}{\\ding{51}}\\fi")
     lines.append("    \\ifdefined\\xmark\\renewcommand{\\xmark}{\\ding{55}}\\fi")
     lines.append("  \\fi")
+    # cleveref 的 \cref / \Cref 在正文里生成的是英文结构名（"Figure 2"、
+    # "Section 2"），\figurename / \captionsetup 都压不住；2301.04104 与
+    # 2509.24527 实测各留 8～20 处。只覆盖图 / 表 / 章节 / 算法，
+    # 故意不动 equation —— 有作者会主动把公式引用名设为空，不该强行加「式」。
+    # \crefformat 里的 # 在 \AtBeginDocument 参数中合法（最小工程实测 0 错误）。
+    lines.append("  \\ifdefined\\crefname")
+    lines.append("    \\crefname{figure}{图}{图}\\Crefname{figure}{图}{图}")
+    lines.append("    \\crefname{table}{表}{表}\\Crefname{table}{表}{表}")
+    lines.append("    \\crefname{algocf}{算法}{算法}\\Crefname{algocf}{算法}{算法}")
+    # algorithm 宏包的浮动体类型是 algorithm（algorithm2e 才是 algocf）；
+    # 2509.24527 两处都写了，只覆盖 algocf 会漏掉 \cref{alg:agent}。
+    lines.append("    \\crefname{algorithm}{算法}{算法}\\Crefname{algorithm}{算法}{算法}")
+    lines.append("    \\crefformat{section}{#2第~#1节#3}\\Crefformat{section}{#2第~#1节#3}")
+    lines.append("    \\crefformat{subsection}{#2第~#1节#3}\\Crefformat{subsection}{#2第~#1节#3}")
+    lines.append("    \\crefformat{subsubsection}{#2第~#1节#3}\\Crefformat{subsubsection}{#2第~#1节#3}")
+    lines.append("  \\fi")
     lines.append("}")
     # caption 宏包的 \captionsetup 只允许在导言区调用；放进 \AtBeginDocument 会报
     # "Package caption Error: Can be used only in preamble"（每个 \caption 都再报一次），

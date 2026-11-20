@@ -305,6 +305,71 @@ check("普通英文正文不豁免",
 check("名单段译文无汉字时不豁免",
       not looks_like_name_list(names_src, "Alice Smith, Bob Jones et al."))
 
+print("\n⑫ 2509.24527：等宽字体里的程序标识符不误报")
+d12 = Path(tempfile.mkdtemp(prefix="arz105-ident-"))
+(d12 / "zh").mkdir()
+(d12 / ".arz").mkdir()
+(d12 / "zh" / "tasks.tex").write_text(
+    "\\begin{tabular}{ll}\n"
+    "\\texttt{craft\\_crafting\\_table} & 1 \\\\\n"
+    "\\texttt{place\\_crafting\\_table} & 1 \\\\\n"
+    "This is an ordinary English sentence that should have been translated.\n"
+    "\\end{tabular}\n", encoding="utf-8")
+# 给一条假 segment 让文件进 by_file（零片段文件只查结构性标题，不走成片英文判据）
+(d12 / ".arz" / "segments.json").write_text(
+    json.dumps({"segments": [{"file": "tasks.tex", "start": 0, "end": 5}]}),
+    encoding="utf-8")
+t12 = " | ".join(f["text"] for f in scan(d12)["suspects"])
+check("带 \\_ 的任务 ID 不报成英文成片", "craft" not in t12.lower(), t12[:90])
+check("同文件里的真漏译仍报出", "ordinary English sentence" in t12, t12[:90])
+from check_coverage import strip_tex                 # noqa: E402
+check("strip_tex 保留自然语言 texttt", "learning rate" in strip_tex(r"\texttt{learning rate}"))
+check("strip_tex 抹掉带 \\_ 的标识符",
+      "craft" not in strip_tex(r"\texttt{craft\_crafting\_table}"))
+
+print("\n⑬ 2301.04104：作者单位 / 通讯邮箱块不误报漏译")
+from check_tr import looks_like_affiliation             # noqa: E402
+aff_src = "Google DeepMind. University of Toronto. Correspondence: mail@danijar.com"
+check("机构名 + 邮箱块豁免",
+      looks_like_affiliation(aff_src, "Google DeepMind. University of Toronto. 通讯作者：mail@danijar.com"))
+check("普通正文不因出现 Email 一词被豁免",
+      not looks_like_affiliation(
+          "Email the model outputs are then evaluated on several downstream "
+          "tasks and compared with all the baselines.",
+          "模型输出随后在多个下游任务上评估并与所有基线比较。"))
+check("译文无汉字时不豁免", not looks_like_affiliation(aff_src, aff_src))
+
+print("\n⑭ 2301.04104：center 环境里手写的 Abstract 标签本地化")
+from apply import localize_center_labels               # noqa: E402
+cen = ("\\begin{center}\\bfseries\n\\vspace{-.5ex}\nAbstract\n"
+       "\\vspace{-.2ex}\n\\end{center}\n")
+cen_out, n_cen = localize_center_labels(cen)
+check("手写 Abstract 变「摘要」",
+      n_cen == 1 and "摘要" in cen_out and "\nAbstract\n" not in cen_out, cen_out[:70])
+check("正文里的 Abstract 一词不动",
+      localize_center_labels("We discuss Abstract models here.\n")[1] == 0)
+check("本地化幂等（第二遍不再改）", localize_center_labels(cen_out)[1] == 0)
+
+print("\n⑮ PDF 分支：单文件对照页改为显式开关")
+pm = (ROOT / "scripts" / "pdf_mode.py").read_text(encoding="utf-8")
+check("单文件版只在显式加 --single-file 时生成",
+      'ap.add_argument("--single-file", action="store_true"' in pm
+      and "if args.single_file:" in pm
+      and 'compare_cmd += ["--single-file"' in pm)
+
+print("\n⑯ 2301.04104 / 2509.24527：cleveref 引用名本地化")
+inj_src = (ROOT / "scripts" / "inject_cjk.py").read_text(encoding="utf-8")
+check("注入块覆盖 figure / table / algocf 的 cref 名",
+      "\\crefname{figure}{图}{图}" in inj_src
+      and "\\crefname{table}{表}{表}" in inj_src
+      and "\\crefname{algocf}{算法}{算法}" in inj_src)
+check("章节引用用 crefformat 输出「第 N 节」",
+      "\\crefformat{section}{#2第~#1节#3}" in inj_src)
+check("同时覆盖 algorithm 宏包的 algorithm 类型",
+      "\\crefname{algorithm}{算法}{算法}" in inj_src)
+check("不动 equation（作者可能主动去掉公式标签）",
+      "\\crefname{equation}" not in inj_src)
+
 print("\n" + ("全部通过" if all(RESULTS) else f"{RESULTS.count(False)} 项失败"),
       f"({sum(RESULTS)}/{len(RESULTS)})")
 sys.exit(0 if all(RESULTS) else 1)

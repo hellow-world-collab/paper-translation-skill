@@ -195,13 +195,16 @@ python $S/submit.py ./2508.08241 batch.tsv --dry-run
 那个技能只在本文件的翻译器缺失时才作为退路。
 
 ```bash
-python $S/pdf_mode.py 论文.pdf --project ./论文 --compare          # 最常用
+python $S/pdf_mode.py 论文.pdf --project ./论文 --compare          # 最常用（只出目录版）
 python $S/pdf_mode.py https://arxiv.org/pdf/2509.09674 --project ./x --compare
+python $S/pdf_mode.py 论文.pdf --project ./x --compare --single-file  # 才额外出单文件版
 python $S/pdf_mode.py 论文.pdf --project ./x --check               # 只体检，不翻译
 python $S/pdf_mode.py 论文.pdf --project ./x --install             # 首次：建 .venv-pdf 并装 pdf2zh
 ```
 
 产物：`<论文>_原文.pdf`、`<论文>_中文版.pdf`、`<论文>_双语版.pdf`、`html/compare/`（若加 `--compare`）。
+`--compare` **默认只出目录版**；单文件版体积约等于两份 PDF 之和 ×4/3（22 MB 的 Nature 期刊版会到 62 MB），
+只有确实要发给别人时才显式加 `--single-file`。
 
 必须知道的五件事：
 

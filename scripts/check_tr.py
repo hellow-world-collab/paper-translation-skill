@@ -52,6 +52,26 @@ def looks_like_name_list(source: str, translated: str) -> bool:
     return covered >= 0.5 and bool(re.search(r"[\u4e00-\u9fff]", translated))
 
 
+# 作者单位 / 通讯邮箱块：机构名与邮箱按惯例照抄，只有「通讯作者」这类少量中文，
+# 汉字占比天然低于 8%（2301.04104 的 \author{} 实测 7%），不应判成漏译。
+AFFILIATION = re.compile(
+    r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"
+    r"|\b(?:University|Institute|Laboratory|Lab|College|School|Department|"
+    r"DeepMind|Google|Microsoft|Research|Inc|Corp|Correspondence|Email)\b",
+    re.I)
+
+
+def looks_like_affiliation(source: str, translated: str) -> bool:
+    """机构名 + 通讯邮箱块：不按「中文过少 / 成片英文」判漏译。"""
+    hits = AFFILIATION.findall(source)
+    if not hits:
+        return False
+    rest = AFFILIATION.sub(" ", source)
+    # 剔掉机构词与邮箱后，不能还剩一大段普通英文正文
+    leftover = len(re.findall(r"[A-Za-z]{2,}", rest))
+    return leftover <= 6 and bool(re.search(r"[\u4e00-\u9fff]", translated))
+
+
 def bare(text: str) -> str:
     return MARKER_RE.sub("", text or "")
 
@@ -92,13 +112,14 @@ def scan(root: Path, strict: bool = False) -> dict:
 
         # 公式/纯符号段没有汉字是正常的，只对含 8 个以上英文词的段要求中文
         if (s["role"] != "head" and words_src >= 8 and cjk_ratio(b) < MIN_CJK
-                and not looks_like_name_list(body, b)):
+                and not looks_like_name_list(body, b)
+                and not looks_like_affiliation(body, b)):
             thin.append({"id": s["id"], "file": s["file"], "cjk": round(cjk_ratio(b), 3),
                          "src": s["source"][:90], "tr": b[:90]})
 
         # 贡献者 / 作者名单里连续英文人名不是「漏抄一段」，别误报成片英文
         longest = ""
-        if not looks_like_name_list(body, b):
+        if not looks_like_name_list(body, b) and not looks_like_affiliation(body, b):
             for m in LATIN_RUN.finditer(b):
                 if len(m.group(0)) > len(longest):
                     longest = m.group(0)
