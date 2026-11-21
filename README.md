@@ -33,7 +33,7 @@
 
 <p align="center">
   <sub><i>VOP-Nav（arXiv 2607.15036）的真实产出，截自最终版对照页：左 20 页原文 / 右 17 页中文，
-  逐页对照、按节自动对齐。页面由 pdf.js 现渲，未加任何修饰，也没开搜索高亮。</i></sub>
+  逐页对照、按节自动对齐。页面由 pdf.js 现渲</i></sub>
 </p>
 
 一个 **WorkBuddy 技能**（也兼容 Claude Code、Codex 等读取 `SKILL.md` 的 agent）形态的工程化流水线：
