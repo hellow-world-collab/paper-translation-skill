@@ -22,18 +22,18 @@
 
 <p align="center">
   <a href="#安装">安装</a> ·
-  <a href="#两条分支">两条分支</a> ·
+  <a href="#三条分支">三条分支</a> ·
   <a href="#对照页">对照页</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#latex-兼容性">兼容性</a> ·
   <a href="#已知限制">已知限制</a>
 </p>
 
-![双栏对照页实拍：左为英文原文，右为中文译文，搜 model 双栏共 141 处命中](docs/images/showcase-compare-dmo.png)
+![双栏对照页实拍：左为英文原文，右为中文译文，标题、摘要、图注整段变成中文](docs/images/showcase-compare.png)
 
 <p align="center">
-  <sub><i>DMO（arXiv 2509.00215）的真实产出，截自最终版对照页：左 22 页原文 / 右 21 页中文，
-  逐页对照、按节自动对齐；页面由 pdf.js 现渲，搜 <code>model</code> 双栏共 141 处命中。截图未经修饰。</i></sub>
+  <sub><i>VOP-Nav（arXiv 2607.15036）的真实产出，截自最终版对照页：左 20 页原文 / 右 17 页中文，
+  逐页对照、按节自动对齐。页面由 pdf.js 现渲，未加任何修饰，也没开搜索高亮。</i></sub>
 </p>
 
 一个 **WorkBuddy 技能**（也兼容 Claude Code、Codex 等读取 `SKILL.md` 的 agent）形态的工程化流水线：
@@ -453,7 +453,7 @@ HTML 分支的边界一致：段落、标题、题注、表格单元格会翻；
 
 本仓库代码以 [MIT License](LICENSE) 发布，可自由使用、修改、商用，保留版权声明即可。
 
-`docs/images/` 里的截图来自 arXiv 论文 *SimpleVLA-RL*（2509.09674）与 *DMO*（2509.00215）的译排结果，仅作效果展示；
+`docs/images/` 里的截图来自 arXiv 论文 *SimpleVLA-RL*（2509.09674）、*VOP-Nav*（2607.15036）、*Dreamer 4*（2509.24527）等篇的译排结果，仅作效果展示；
 原文版权归原作者，公开分发译文前请确认原论文的改编与再分发许可。
 
 第三方组件：
